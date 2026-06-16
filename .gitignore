@@ -1,0 +1,25 @@
+# API 密钥和环境变量（绝不提交到 git）
+.env
+.env.*
+
+# 构建产物
+WeaveBrain/bin/
+WeaveBrain/pkg/mod/cache/
+WeaveFlutter/build/
+WeaveFlutter/.dart_tool/
+WeaveFlutter/*.iml
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Claude Code 会话残留
+tmpclaude-*
+nul
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

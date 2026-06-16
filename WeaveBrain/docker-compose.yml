@@ -1,0 +1,98 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: weavebrain-postgres
+    environment:
+      POSTGRES_USER: weavebrain
+      POSTGRES_PASSWORD: weavebrain_dev
+      POSTGRES_DB: weavebrain
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weavebrain"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    container_name: weavebrain-temporal
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=weavebrain
+      - POSTGRES_PWD=weavebrain_dev
+      - POSTGRES_SEEDS=postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development.yaml
+    ports:
+      - "7233:7233"
+    volumes:
+      - ./config/dynamicconfig:/etc/temporal/config/dynamicconfig
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "temporal:7233", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  temporal-ui:
+    image: temporalio/ui:2.32.0
+    container_name: weavebrain-temporal-ui
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    ports:
+      - "8088:8080"
+    depends_on:
+      temporal:
+        condition: service_healthy
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: weavebrain-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollamadata:/root/.ollama
+
+  funasr:
+    image: registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.12
+    container_name: weavebrain-funasr
+    ports:
+      - "10095:10095"
+    volumes:
+      - funasr-models:/workspace/models
+    command: >
+      bash -c "cd /workspace/FunASR/runtime &&
+      python funasr_wss_server.py
+      --port 10095
+      --decoder-thread-num 4
+      --io-thread-num 2
+      --certfile ''
+      --hotword /workspace/hotwords.txt"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: weavebrain-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:
+  ollamadata:
+  funasr-models:
+  redisdata:
