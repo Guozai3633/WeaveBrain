@@ -5,6 +5,7 @@
 # 构建产物
 WeaveBrain/bin/
 WeaveBrain/pkg/mod/cache/
+*.exe
 WeaveFlutter/build/
 WeaveFlutter/.dart_tool/
 WeaveFlutter/*.iml
