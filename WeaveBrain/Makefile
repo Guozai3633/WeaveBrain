@@ -1,6 +1,9 @@
 # WeaveBrain - Development Commands
 
-.PHONY: build run test migrate-up migrate-down docker-up docker-down clean
+.PHONY: build run test migrate-up migrate-down docker-up docker-down clean db-create-test migrate-test-up test-integration test-integration-fast
+
+# Test database connection string (dedicated DB, not the dev DB).
+TEST_DB_URL ?= postgresql://weavebrain:weavebrain_dev@localhost:5432/weavebrain_test
 
 # Build the application
 build:
@@ -28,6 +31,24 @@ migrate-down:
 
 migrate-status:
 	goose -dir internal/db/migration postgres "postgresql://weavebrain:weavebrain_dev@localhost:5432/weavebrain" status
+
+# Integration test database (dedicated weavebrain_test DB, created idempotently
+# inside the running postgres container; never touches the dev weavebrain DB).
+db-create-test:
+	docker exec weavebrain-postgres psql -U weavebrain -d weavebrain -tAc "SELECT 1 FROM pg_database WHERE datname='weavebrain_test'" | grep -q 1 || docker exec weavebrain-postgres createdb -U weavebrain weavebrain_test
+
+# Apply goose migrations to the test database.
+migrate-test-up:
+	goose -dir internal/db/migration postgres "$(TEST_DB_URL)" up
+
+# Run the full unit + integration suite against a real PostgreSQL test DB.
+# Integration tests gate on WEAVEBRAIN_TEST_DATABASE_URL and skip without it.
+test-integration: db-create-test migrate-test-up
+	WEAVEBRAIN_TEST_DATABASE_URL="$(TEST_DB_URL)" go test ./... -count=1 -v
+
+# Run only the real-PostgreSQL integration tests (skips plain unit tests).
+test-integration-fast: db-create-test migrate-test-up
+	WEAVEBRAIN_TEST_DATABASE_URL="$(TEST_DB_URL)" go test ./... -count=1 -run 'Integration|Soak|Orphan|Traceability|Acceptance|RealPG' -v
 
 # Docker commands
 docker-up:

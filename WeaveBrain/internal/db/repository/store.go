@@ -9,29 +9,45 @@ import (
 
 // DBStore holds all repository instances.
 type DBStore struct {
-	Pool        *pgxpool.Pool
-	User        UserRepository
-	Identity    IdentityRepository
-	Project     ProjectRepository
-	Idea        IdeaRepository
-	UserProfile UserProfileRepository
-	Reminder    ReminderRepository
-	WorkflowRun WorkflowRunRepository
-	MCPAuditLog MCPAuditLogRepository
+	Pool          *pgxpool.Pool
+	User          UserRepository
+	Identity      IdentityRepository
+	Project       ProjectRepository
+	Idea          IdeaRepository
+	Capture       CaptureRepository
+	AudioAsset    AudioAssetRepository
+	Transcript    TranscriptRepository
+	UserProfile   UserProfileRepository
+	Reminder      ReminderRepository
+	WorkflowRun   WorkflowRunRepository
+	MCPAuditLog   MCPAuditLogRepository
+	UserMcpConfig UserMcpConfigRepository
+	AISettings    UserAISettingsRepository
+	Outbox        OutboxRepository
+	Timeline      TimelineRepository
+	Memory        MemoryRepository
 }
 
 func NewFromPool(pool *pgxpool.Pool) *DBStore {
 	conn := NewPgConn(pool)
 	return &DBStore{
-		Pool:        pool,
-		User:        NewUserRepository(conn),
-		Identity:    NewIdentityRepository(conn),
-		Project:     NewProjectRepository(conn),
-		Idea:        NewIdeaRepository(conn),
-		UserProfile: NewUserProfileRepository(conn),
-		Reminder:    NewReminderRepository(conn),
-		WorkflowRun: NewWorkflowRunRepository(conn),
-		MCPAuditLog: NewMCPAuditLogRepository(conn),
+		Pool:          pool,
+		User:          NewUserRepository(conn),
+		Identity:      NewIdentityRepository(conn),
+		Project:       NewProjectRepository(conn),
+		Idea:          NewIdeaRepository(conn),
+		Capture:       NewCaptureRepository(conn),
+		AudioAsset:    NewAudioAssetRepository(conn),
+		Transcript:    NewTranscriptRepository(conn),
+		UserProfile:   NewUserProfileRepository(conn),
+		Reminder:      NewReminderRepository(conn),
+		WorkflowRun:   NewWorkflowRunRepository(conn),
+		MCPAuditLog:   NewMCPAuditLogRepository(conn),
+		UserMcpConfig: NewUserMcpConfigRepository(conn),
+		AISettings:    NewUserAISettingsRepository(conn),
+		Outbox:        NewOutboxRepository(conn),
+		Timeline:      NewTimelineRepository(conn),
+		Memory:        NewMemoryRepository(conn),
 	}
 }
 
@@ -45,15 +61,23 @@ func (s *DBStore) BeginTx(ctx context.Context) (context.Context, *DBStore, func(
 
 	conn := NewTxWrapper(tx)
 	txStore := &DBStore{
-		Pool:        s.Pool,
-		User:        NewUserRepository(conn),
-		Identity:    NewIdentityRepository(conn),
-		Project:     NewProjectRepository(conn),
-		Idea:        NewIdeaRepository(conn),
-		UserProfile: NewUserProfileRepository(conn),
-		Reminder:    NewReminderRepository(conn),
-		WorkflowRun: NewWorkflowRunRepository(conn),
-		MCPAuditLog: NewMCPAuditLogRepository(conn),
+		Pool:          s.Pool,
+		User:          NewUserRepository(conn),
+		Identity:      NewIdentityRepository(conn),
+		Project:       NewProjectRepository(conn),
+		Idea:          NewIdeaRepository(conn),
+		Capture:       NewCaptureRepository(conn),
+		AudioAsset:    NewAudioAssetRepository(conn),
+		Transcript:    NewTranscriptRepository(conn),
+		UserProfile:   NewUserProfileRepository(conn),
+		Reminder:      NewReminderRepository(conn),
+		WorkflowRun:   NewWorkflowRunRepository(conn),
+		MCPAuditLog:   NewMCPAuditLogRepository(conn),
+		UserMcpConfig: NewUserMcpConfigRepository(conn),
+		AISettings:    NewUserAISettingsRepository(conn),
+		Outbox:        NewOutboxRepository(conn),
+		Timeline:      NewTimelineRepository(conn),
+		Memory:        NewMemoryRepository(conn),
 	}
 
 	commitFn := func(commit bool) error {

@@ -40,9 +40,9 @@ func IdeaWorkflow(ctx workflow.Context, input IdeaProcessInput) (*IdeaProcessOut
 	}
 
 	return &IdeaProcessOutput{
-		IdeaID:      saveResult.IdeaID,
-		Response:    agentResult.Response,
-		Tags:        agentResult.Tags,
+		IdeaID:   saveResult.IdeaID,
+		Response: agentResult.Response,
+		Tags:     agentResult.Tags,
 		Feasibility: func() string {
 			if sd, ok := agentResult.StructuredData["feasibility"].(string); ok {
 				return sd

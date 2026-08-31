@@ -7,6 +7,8 @@ import (
 	"weavebrain/internal/db/repository"
 	"weavebrain/internal/embedding"
 	"weavebrain/internal/entity"
+
+	"github.com/google/uuid"
 )
 
 // EmbeddingService manages vector embedding generation and semantic search.
@@ -45,6 +47,16 @@ func (s *EmbeddingService) SearchSimilar(ctx context.Context, projectID int64, q
 	}
 
 	return s.repos.Idea.SearchBySimilarity(ctx, projectID, vec, limit)
+}
+
+// SearchGlobalSimilarIdeas finds ideas semantically similar across all projects of a user.
+func (s *EmbeddingService) SearchGlobalSimilarIdeas(ctx context.Context, userID uuid.UUID, query string, threshold float64, limit int) ([]*entity.Idea, error) {
+	vec, err := s.provider.Embed(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.repos.Idea.SearchGlobalBySimilarity(ctx, userID, vec, threshold, limit)
 }
 
 // BackfillEmbeddings generates embeddings for ideas that don't have one yet.

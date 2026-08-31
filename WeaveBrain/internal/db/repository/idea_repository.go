@@ -7,6 +7,7 @@ import (
 
 	"weavebrain/internal/entity"
 
+	"github.com/google/uuid"
 	"github.com/pgvector/pgvector-go"
 )
 
@@ -46,21 +47,22 @@ func (r *ideaRepository) GetByID(ctx context.Context, id int64) (*entity.Idea, e
 	return i, nil
 }
 
-func (r *ideaRepository) GetByProjectID(ctx context.Context, projectID int64, page, limit int) ([]*entity.Idea, int64, error) {
+func (r *ideaRepository) GetByProjectID(ctx context.Context, userID uuid.UUID, projectID int64, page, limit int) ([]*entity.Idea, int64, error) {
 	offset := (page - 1) * limit
 
 	var count int64
 	err := r.db.QueryRow(ctx,
-		"SELECT COUNT(*) FROM ideas WHERE project_id = $1 AND deleted_at IS NULL", projectID).Scan(&count)
+		"SELECT COUNT(*) FROM ideas WHERE project_id = $1 AND user_id = $2 AND deleted_at IS NULL",
+		projectID, userID).Scan(&count)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	rows, err := r.db.Query(ctx,
 		`SELECT id, project_id, user_id, raw_input, structured_data, tags, created_at, updated_at
-		 FROM ideas WHERE project_id = $1 AND deleted_at IS NULL
-		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
-		projectID, limit, offset,
+		 FROM ideas WHERE project_id = $1 AND user_id = $2 AND deleted_at IS NULL
+		 ORDER BY created_at DESC LIMIT $3 OFFSET $4`,
+		projectID, userID, limit, offset,
 	)
 	if err != nil {
 		return nil, 0, err
@@ -117,10 +119,10 @@ func (r *ideaRepository) ListByTags(ctx context.Context, tags []string, projectI
 	return ideas, nil
 }
 
-func (r *ideaRepository) Search(ctx context.Context, projectID int64, query string, tags []string, limit, offset int) ([]*entity.Idea, int64, error) {
-	where := "project_id = $1 AND deleted_at IS NULL"
-	args := []any{projectID}
-	argIdx := 2
+func (r *ideaRepository) Search(ctx context.Context, userID uuid.UUID, projectID int64, query string, tags []string, limit, offset int) ([]*entity.Idea, int64, error) {
+	where := "project_id = $1 AND user_id = $2 AND deleted_at IS NULL"
+	args := []any{projectID, userID}
+	argIdx := 3
 
 	if query != "" {
 		where += fmt.Sprintf(" AND raw_input ILIKE $%d", argIdx)
@@ -173,6 +175,36 @@ func (r *ideaRepository) SearchBySimilarity(ctx context.Context, projectID int64
 		 ORDER BY embedding <=> $2
 		 LIMIT $3`,
 		projectID, vec, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var similarIdeas []*entity.Idea
+	for rows.Next() {
+		i := &entity.Idea{}
+		if err := rows.Scan(&i.ID, &i.ProjectID, &i.UserID, &i.RawInput, &i.StructuredData, &i.Tags, &i.CreatedAt, &i.UpdatedAt); err != nil {
+			return nil, err
+		}
+		similarIdeas = append(similarIdeas, i)
+	}
+	return similarIdeas, nil
+}
+
+func (r *ideaRepository) SearchGlobalBySimilarity(ctx context.Context, userID uuid.UUID, embedding []float32, threshold float64, limit int) ([]*entity.Idea, error) {
+	vec := pgvector.NewVector(embedding)
+	// cosine distance threshold: distance < (1.0 - threshold)
+	distThreshold := 1.0 - threshold
+
+	rows, err := r.db.Query(ctx,
+		`SELECT id, project_id, user_id, raw_input, structured_data, tags, created_at, updated_at
+		 FROM ideas
+		 WHERE user_id = $1 AND deleted_at IS NULL AND embedding IS NOT NULL
+		   AND (embedding <=> $2) < $3
+		 ORDER BY embedding <=> $2
+		 LIMIT $4`,
+		userID, vec, distThreshold, limit,
 	)
 	if err != nil {
 		return nil, err

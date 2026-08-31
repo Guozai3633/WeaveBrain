@@ -2,6 +2,8 @@ package mock
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,8 +14,8 @@ import (
 // It simulates streaming transcription by returning pre-scripted responses
 // with configurable delays.
 type Provider struct {
-	script  []string
-	delay   time.Duration
+	script []string
+	delay  time.Duration
 }
 
 // Config configures the mock STT provider.
@@ -126,6 +128,37 @@ func (p *Provider) StreamRecognize(ctx context.Context, audioStream <-chan []byt
 	}()
 
 	return out, nil
+}
+
+// RecognizeFile transcribes a complete audio file.
+// The mock verifies the file exists and is non-empty, then returns the first
+// scripted sentence as the final result. It simulates STT failure when the
+// file content contains the marker "FAIL" (used by adversarial tests).
+func (p *Provider) RecognizeFile(_ context.Context, audioPath string) (stt.TranscriptionResult, error) {
+	info, err := os.Stat(audioPath)
+	if err != nil {
+		return stt.TranscriptionResult{}, fmt.Errorf("mock stt: read audio file: %w", err)
+	}
+	if info.Size() == 0 {
+		return stt.TranscriptionResult{}, fmt.Errorf("mock stt: audio file is empty")
+	}
+
+	data, err := os.ReadFile(audioPath)
+	if err != nil {
+		return stt.TranscriptionResult{}, fmt.Errorf("mock stt: read audio file: %w", err)
+	}
+	if strings.Contains(string(data), "FAIL") {
+		return stt.TranscriptionResult{}, fmt.Errorf("mock stt: simulated recognition failure")
+	}
+
+	if len(p.script) == 0 {
+		return stt.TranscriptionResult{}, fmt.Errorf("mock stt: no script configured")
+	}
+	return stt.TranscriptionResult{
+		Text:       p.script[0],
+		IsFinal:    true,
+		Confidence: 0.95,
+	}, nil
 }
 
 // Close is a no-op for the mock provider.

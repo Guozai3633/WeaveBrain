@@ -32,7 +32,7 @@ func (h *AgentHandler) RegisterRoutes(rg *gin.RouterGroup) {
 
 // ProcessInputRequest is the request body for processing input.
 type ProcessInputRequest struct {
-	Input   string `json:"input" binding:"required"`
+	Input     string `json:"input" binding:"required"`
 	ProjectID string `json:"project_id,omitempty"`
 }
 
@@ -102,10 +102,10 @@ func (h *AgentHandler) ProcessInput(c *gin.Context) {
 
 // StatusResponse is the response body for agent status.
 type StatusResponse struct {
-	Ready     bool   `json:"ready"`
-	Tools     int    `json:"tool_count"`
-	Message   string `json:"message"`
-	Temporal  bool   `json:"temporal_connected"`
+	Ready    bool   `json:"ready"`
+	Tools    int    `json:"tool_count"`
+	Message  string `json:"message"`
+	Temporal bool   `json:"temporal_connected"`
 }
 
 // GetStatus handles GET /api/v1/agent/status.
@@ -170,6 +170,12 @@ type WorkflowStatusResponse struct {
 
 // GetWorkflowStatus handles GET /api/v1/agent/workflow/:id.
 func (h *AgentHandler) GetWorkflowStatus(c *gin.Context) {
+	userID, ok := getCurrentUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
 	workflowID := c.Param("id")
 	if workflowID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "workflow_id is required"})
@@ -189,6 +195,11 @@ func (h *AgentHandler) GetWorkflowStatus(c *gin.Context) {
 	}
 	if wr == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "workflow not found"})
+		return
+	}
+
+	if wr.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 

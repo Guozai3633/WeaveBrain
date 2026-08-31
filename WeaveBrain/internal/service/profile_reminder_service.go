@@ -92,12 +92,22 @@ func (s *ReminderService) GetByID(ctx context.Context, id int64) (*entity.Remind
 	return s.repos.Reminder.GetByID(ctx, id)
 }
 
-// GetPending returns pending reminders before the given time.
+// GetPending returns pending reminders before the given time, system-wide.
+// Used by the Temporal cron for reminder delivery across all users.
 func (s *ReminderService) GetPending(ctx context.Context, before time.Time, limit int) ([]*entity.Reminder, error) {
 	if limit < 1 {
 		limit = 50
 	}
 	return s.repos.Reminder.GetPending(ctx, before, limit)
+}
+
+// GetPendingByUser returns a single user's pending reminders before the given
+// time. Used by the HTTP API so one user cannot read another's reminders.
+func (s *ReminderService) GetPendingByUser(ctx context.Context, userID uuid.UUID, before time.Time, limit int) ([]*entity.Reminder, error) {
+	if limit < 1 {
+		limit = 50
+	}
+	return s.repos.Reminder.GetPendingByUser(ctx, userID, before, limit)
 }
 
 // Trigger marks a reminder as triggered.

@@ -54,11 +54,11 @@ func ProcessIdeaActivity(ctx context.Context, input ProcessIdeaActivityInput) (*
 	return &ProcessIdeaActivityResult{
 		Response: result.Reply,
 		StructuredData: map[string]any{
-			"tags":         result.Tags,
-			"base_input":   result.BaseInput,
-			"ai_mean_env":  result.AiMeanEnv,
-			"feasibility":  result.Feasibility,
-			"suggestions":  result.Suggestions,
+			"tags":        result.Tags,
+			"base_input":  result.BaseInput,
+			"ai_mean_env": result.AiMeanEnv,
+			"feasibility": result.Feasibility,
+			"suggestions": result.Suggestions,
 		},
 		Tags: result.Tags,
 	}, nil
@@ -171,7 +171,7 @@ func AggregateDailyIdeasActivity(ctx context.Context, input AggregateDailyIdeasI
 		}, nil
 	}
 
-	ideas, _, err := activities.IdeaService.ListByProject(ctx, input.ProjectID, 1, 100)
+	ideas, _, err := activities.IdeaService.ListByProject(ctx, input.UserID, input.ProjectID, 1, 100)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list ideas: %w", err)
 	}

@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"weavebrain/internal/entity"
+
+	"github.com/google/uuid"
 )
 
 type reminderRepository struct {
@@ -44,6 +46,30 @@ func (r *reminderRepository) GetPending(ctx context.Context, before time.Time, l
 		 FROM reminders WHERE status = 'pending' AND trigger_time < $1
 		 ORDER BY trigger_time ASC LIMIT $2`,
 		before, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reminders []*entity.Reminder
+	for rows.Next() {
+		rem := &entity.Reminder{}
+		if err := rows.Scan(&rem.ID, &rem.UserID, &rem.ProjectID, &rem.TriggerTime, &rem.Message, &rem.Status, &rem.CreatedAt); err != nil {
+			return nil, err
+		}
+		reminders = append(reminders, rem)
+	}
+	return reminders, nil
+}
+
+func (r *reminderRepository) GetPendingByUser(ctx context.Context, userID uuid.UUID, before time.Time, limit int) ([]*entity.Reminder, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT id, user_id, project_id, trigger_time, message, status, created_at
+		 FROM reminders
+		 WHERE user_id = $1 AND status = 'pending' AND trigger_time < $2
+		 ORDER BY trigger_time ASC LIMIT $3`,
+		userID, before, limit,
 	)
 	if err != nil {
 		return nil, err

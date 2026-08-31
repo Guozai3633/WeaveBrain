@@ -62,18 +62,23 @@ services:
       - ollamadata:/root/.ollama
 
   funasr:
-    image: registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.12
+    image: registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-cpu-0.4.1
     container_name: weavebrain-funasr
     ports:
       - "10095:10095"
     volumes:
       - funasr-models:/workspace/models
     command: >
-      bash -c "cd /workspace/FunASR/runtime &&
-      python funasr_wss_server.py
-      --port 10095
+      bash -c "cd /workspace/FunASR/runtime/websocket/build/bin &&
+      ./funasr-wss-server
+      --download-model-dir /workspace/models
+      --model-dir damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-onnx
+      --vad-dir damo/speech_fsmn_vad_zh-cn-16k-common-onnx
+      --punc-dir damo/punc_ct-transformer_cn-en-common-vocab471067-large-onnx
       --decoder-thread-num 4
+      --model-thread-num 1
       --io-thread-num 2
+      --port 10095
       --certfile ''
       --hotword /workspace/hotwords.txt"
     restart: unless-stopped
@@ -90,6 +95,37 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  weavebrain:
+    build: .
+    container_name: weavebrain-api
+    ports:
+      - "8083:8080"
+    environment:
+      - SERVER_PORT=8080
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=weavebrain
+      - DB_PASSWORD=weavebrain_dev
+      - DB_NAME=weavebrain
+      - REDIS_URL=redis://redis:6379
+      - TEMPORAL_ADDRESS=temporal:7233
+      - ANTHROPIC_BASE_URL=http://ollama:11434/v1
+      - ANTHROPIC_API_KEY=ollama
+      - EMBEDDING_BASE_URL=http://ollama:11434/v1
+      - EMBEDDING_API_KEY=ollama
+      - EMBEDDING_MODEL=nomic-embed-text
+      - EMBEDDING_DIM=768
+      - STT_PROVIDER=funasr
+      - FUNASR_ADDR=funasr:10095
+      - REVIEW_PROVIDER=mock
+      - JWT_SECRET=dev-secret-change-in-production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:

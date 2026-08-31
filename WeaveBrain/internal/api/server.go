@@ -14,20 +14,22 @@ import (
 
 // Server holds the HTTP server configuration and routes.
 type Server struct {
-	port         string
-	services     *service.Services
-	tokenCfg     auth.TokenConfig
-	engine       *gin.Engine
-	http         *http.Server
-	sttProvider  string
+	port          string
+	services      *service.Services
+	tokenCfg      auth.TokenConfig
+	engine        *gin.Engine
+	http          *http.Server
+	sttProvider   string
 	reviewService *review.Service
-	rateLimiter  ratelimit.Limiter
+	rateLimiter   ratelimit.Limiter
+	encryptionKey []byte
 }
 
 // NewServer creates a new HTTP server with routes.
-func NewServer(port string, services *service.Services, tokenCfg auth.TokenConfig, sttProvider string, reviewService *review.Service, rateLimiter ratelimit.Limiter) *Server {
+func NewServer(port string, services *service.Services, tokenCfg auth.TokenConfig, sttProvider string, reviewService *review.Service, rateLimiter ratelimit.Limiter, encryptionKey []byte) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.Default()
+	engine.Use(requestIDMiddleware())
 
 	// CORS middleware
 	engine.Use(corsMiddleware())
@@ -41,13 +43,14 @@ func NewServer(port string, services *service.Services, tokenCfg auth.TokenConfi
 	}
 
 	s := &Server{
-		port:         port,
-		services:     services,
-		tokenCfg:     tokenCfg,
-		engine:       engine,
-		sttProvider:  sttProvider,
+		port:          port,
+		services:      services,
+		tokenCfg:      tokenCfg,
+		engine:        engine,
+		sttProvider:   sttProvider,
 		reviewService: reviewService,
-		rateLimiter:  rateLimiter,
+		rateLimiter:   rateLimiter,
+		encryptionKey: encryptionKey,
 	}
 
 	s.setupRoutes()
@@ -61,6 +64,31 @@ func NewServer(port string, services *service.Services, tokenCfg auth.TokenConfi
 }
 
 func (s *Server) setupRoutes() {
+	registerV3ContractRoutes(s.engine)
+
+	// New domain routes use the V3 error and authentication contracts.
+	protectedV3 := s.engine.Group(apiV3Prefix)
+	protectedV3.Use(v3JWTMiddleware(s.tokenCfg))
+	{
+		captureHandler := NewCaptureHandler(s.services.Capture)
+		captureHandler.RegisterRoutes(protectedV3)
+
+		if s.services.Audio != nil {
+			audioHandler := NewAudioAssetHandler(s.services.Audio)
+			audioHandler.RegisterRoutes(protectedV3)
+		}
+
+		if s.services.AISettings != nil {
+			aiSettingsHandler := NewAISettingsHandler(s.services.AISettings)
+			aiSettingsHandler.RegisterRoutes(protectedV3)
+		}
+
+		if s.services.Memory != nil {
+			memoryHandler := NewMemoryHandler(s.services.Memory)
+			memoryHandler.RegisterRoutes(protectedV3)
+		}
+	}
+
 	// Public routes (no auth required)
 	public := s.engine.Group("/api/v1")
 	{
@@ -74,6 +102,15 @@ func (s *Server) setupRoutes() {
 	{
 		users := protected.Group("/users")
 		s.setupUserRoutes(users)
+
+		// 注册 users/me/mcp-configs
+		usersMe := users.Group("/me")
+		mcpHandler := NewMcpConfigHandler(s.services.Store, s.encryptionKey)
+		mcpHandler.RegisterRoutes(usersMe)
+
+		// 注册 users/me/timeline
+		timelineHandler := NewTimelineHandler(s.services.Store)
+		usersMe.GET("/timeline", timelineHandler.GetTimeline)
 
 		projects := protected.Group("/projects")
 		s.setupProjectRoutes(projects)

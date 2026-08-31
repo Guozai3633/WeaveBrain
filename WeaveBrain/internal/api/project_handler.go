@@ -18,8 +18,8 @@ func (s *Server) setupProjectRoutes(group *gin.RouterGroup) {
 }
 
 type CreateProjectRequest struct {
-	Name         string `json:"name" binding:"required"`
-	DefaultProject bool `json:"default_project"`
+	Name           string `json:"name" binding:"required"`
+	DefaultProject bool   `json:"default_project"`
 }
 
 func (s *Server) handleCreateProject(c *gin.Context) {

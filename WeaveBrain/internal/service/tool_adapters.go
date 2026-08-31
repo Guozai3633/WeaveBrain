@@ -54,7 +54,7 @@ func (a *EnvironmentAdapter) GetEnvironmentContext(ctx context.Context, userID s
 			Description: "",
 		}
 
-		ideas, _, err := a.ideaService.ListByProject(ctx, p.ID, 1, 5)
+		ideas, _, err := a.ideaService.ListByProject(ctx, uid, p.ID, 1, 5)
 		if err == nil {
 			summary.IdeaCount = len(ideas)
 			for _, idea := range ideas {
@@ -203,13 +203,18 @@ func (a *QueryIdeasAdapter) QueryIdeas(ctx context.Context, input agent.QueryIde
 		limit = 20
 	}
 
+	uid, err := uuid.Parse(input.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid user_id: %w", err)
+	}
+
 	if input.ProjectID != "" {
 		projectID, err := strconv.ParseInt(input.ProjectID, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("invalid project_id: %w", err)
 		}
 
-		ideas, total, err := a.ideaService.ListByProject(ctx, projectID, 1, limit)
+		ideas, total, err := a.ideaService.ListByProject(ctx, uid, projectID, 1, limit)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list ideas: %w", err)
 		}

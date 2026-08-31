@@ -12,6 +12,8 @@ import (
 	"weavebrain/internal/db/repository"
 	"weavebrain/internal/entity"
 	"weavebrain/internal/mcp"
+	"weavebrain/pkg/auth"
+	"weavebrain/pkg/crypto"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/google/uuid"
@@ -38,20 +40,27 @@ type AgentService struct {
 	ideaQuerier     agent.IdeaQuerier
 	reminderCreator agent.ReminderCreator
 	auditRepo       repository.MCPAuditLogRepository
+	store           *repository.DBStore
+	encryptionKey   []byte
+	embeddingSvc    *EmbeddingService
 }
 
 // NewAgentService creates a new AgentService with tool provider dependencies.
-func NewAgentService(env agent.EnvironmentProvider, profile agent.UserProfileProvider, ideaCreate agent.IdeaCreator, ideaQuery agent.IdeaQuerier, reminder agent.ReminderCreator, auditRepo repository.MCPAuditLogRepository) *AgentService {
-	return &AgentService{
+func NewAgentService(env agent.EnvironmentProvider, profile agent.UserProfileProvider, ideaCreate agent.IdeaCreator, ideaQuery agent.IdeaQuerier, reminder agent.ReminderCreator, auditRepo repository.MCPAuditLogRepository, store *repository.DBStore, encryptionKey []byte) *AgentService {
+	s := &AgentService{
 		hitlRunner:      agent.NewHITLRunner(),
-		mcpRegistry:     mcp.NewRegistry(),
 		envProvider:     env,
 		profileProvider: profile,
 		ideaCreator:     ideaCreate,
 		ideaQuerier:     ideaQuery,
 		reminderCreator: reminder,
 		auditRepo:       auditRepo,
+		store:           store,
+		encryptionKey:   encryptionKey,
 	}
+	// Inject self as CredentialProvider to registry
+	s.mcpRegistry = mcp.NewRegistry(s)
+	return s
 }
 
 // Init initializes the Supervisor Agent with tools and LLM.
@@ -125,8 +134,40 @@ func (s *AgentService) ProcessInput(ctx context.Context, userID, input string, p
 	supervisor := s.supervisor
 	s.mu.RUnlock()
 
+	// RAG Pre-retrieval for Long-term Memory
+	var memoryContext string
+	s.mu.RLock()
+	es := s.embeddingSvc
+	s.mu.RUnlock()
+
+	if es != nil && userID != "" {
+		if uid, err := uuid.Parse(userID); err == nil {
+			// Threshold 0.78, topK 3
+			similarIdeas, err := es.SearchGlobalSimilarIdeas(ctx, uid, input, 0.78, 3)
+			if err == nil && len(similarIdeas) > 0 {
+				memoryContext = "\n【参考记忆】以下是系统自动检索到的相关历史记忆：\n"
+				for _, idea := range similarIdeas {
+					text := idea.RawInput
+					// truncate to avoid pollution
+					if len(text) > 200 {
+						text = text[:197] + "..."
+					}
+					memoryContext += fmt.Sprintf("- [%s] %s\n", idea.CreatedAt.Format("2006-01-02"), text)
+				}
+				memoryContext += "（注：以上仅供参考，不一定完全关联，请综合分析。）\n"
+			} else if err != nil {
+				log.Printf("Warning: pre-retrieval RAG failed: %v", err)
+			}
+		}
+	}
+
 	// Prepend user context to the input
-	enrichedInput := fmt.Sprintf("[User: %s] %s", userID, input)
+	enrichedInput := fmt.Sprintf("[User: %s]\n%s\n【当前指令】%s", userID, memoryContext, input)
+
+	// Ensure UserID is in the context for tool interception
+	if uid, err := uuid.Parse(userID); err == nil {
+		ctx = context.WithValue(ctx, auth.ContextKeyUserID, uid)
+	}
 
 	msg, err := supervisor.Generate(ctx, enrichedInput)
 	if err != nil {
@@ -182,8 +223,12 @@ func (s *AgentService) SetDispatcher(d Dispatcher) {
 	s.dispatcher = d
 }
 
-// SetEmbeddingService injects the embedding service into the EnvironmentAdapter.
+// SetEmbeddingService injects the embedding service into the AgentService and EnvironmentAdapter.
 func (s *AgentService) SetEmbeddingService(es *EmbeddingService) {
+	s.mu.Lock()
+	s.embeddingSvc = es
+	s.mu.Unlock()
+
 	if adapter, ok := s.envProvider.(*EnvironmentAdapter); ok {
 		adapter.SetEmbeddingService(es)
 	}
@@ -236,4 +281,32 @@ func (a *auditLoggerAdapter) LogToolCall(ctx context.Context, event agent.AuditE
 	}
 
 	return a.repo.Create(ctx, log)
+}
+
+// GetCredential implements mcp.CredentialProvider
+func (s *AgentService) GetCredential(ctx context.Context, userID uuid.UUID, namespace string) (string, error) {
+	if s.store == nil || s.store.UserMcpConfig == nil {
+		return "", fmt.Errorf("UserMcpConfig repository not available")
+	}
+
+	config, err := s.store.UserMcpConfig.GetByNamespace(ctx, userID, namespace)
+	if err != nil {
+		return "", fmt.Errorf("database error: %w", err)
+	}
+
+	if config == nil {
+		return "", mcp.ErrNoCredentials
+	}
+
+	if !config.Enabled {
+		return "", mcp.ErrToolDisabled
+	}
+
+	// decrypt
+	decrypted, err := crypto.Decrypt(config.EncryptedCredentials, s.encryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("decryption failed: %w", err)
+	}
+
+	return string(decrypted), nil
 }

@@ -10,6 +10,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// ErrProjectForbidden indicates the target project does not belong to the
+// calling user, preventing cross-user writes through the ideas API.
+var ErrProjectForbidden = errors.New("project does not belong to user")
+
 // IdeaService handles idea capture and retrieval.
 type IdeaService struct {
 	repos     *repository.DBStore
@@ -36,9 +40,12 @@ func (s *IdeaService) Create(ctx context.Context, projectID int64, userID uuid.U
 	}
 
 	// Validate project belongs to user.
-	_, err := s.repos.Project.GetByID(ctx, projectID)
+	project, err := s.repos.Project.GetByID(ctx, projectID)
 	if err != nil {
 		return nil, err
+	}
+	if project.UserID != userID {
+		return nil, ErrProjectForbidden
 	}
 
 	i := entity.NewIdea()
@@ -65,15 +72,15 @@ func (s *IdeaService) GetByID(ctx context.Context, id int64) (*entity.Idea, erro
 	return s.repos.Idea.GetByID(ctx, id)
 }
 
-// ListByProject lists ideas for a project with pagination.
-func (s *IdeaService) ListByProject(ctx context.Context, projectID int64, page, limit int) ([]*entity.Idea, int64, error) {
+// ListByProject lists ideas for a project with pagination, scoped to the user.
+func (s *IdeaService) ListByProject(ctx context.Context, userID uuid.UUID, projectID int64, page, limit int) ([]*entity.Idea, int64, error) {
 	if page < 1 {
 		page = 1
 	}
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
-	return s.repos.Idea.GetByProjectID(ctx, projectID, page, limit)
+	return s.repos.Idea.GetByProjectID(ctx, userID, projectID, page, limit)
 }
 
 // Update updates an idea.
@@ -104,8 +111,8 @@ func (s *IdeaService) SearchByTags(ctx context.Context, tags []string, projectID
 	return s.repos.Idea.ListByTags(ctx, tags, projectID)
 }
 
-// Search finds ideas by text query and/or tags with pagination.
-func (s *IdeaService) Search(ctx context.Context, projectID int64, query string, tags []string, page, limit int) ([]*entity.Idea, int64, error) {
+// Search finds ideas by text query and/or tags with pagination, scoped to the user.
+func (s *IdeaService) Search(ctx context.Context, userID uuid.UUID, projectID int64, query string, tags []string, page, limit int) ([]*entity.Idea, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -113,5 +120,5 @@ func (s *IdeaService) Search(ctx context.Context, projectID int64, query string,
 		limit = 20
 	}
 	offset := (page - 1) * limit
-	return s.repos.Idea.Search(ctx, projectID, query, tags, limit, offset)
+	return s.repos.Idea.Search(ctx, userID, projectID, query, tags, limit, offset)
 }

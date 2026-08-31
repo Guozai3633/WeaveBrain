@@ -50,7 +50,7 @@ type clientControlMsg struct {
 
 // serverTranscriptionMsg represents a transcription result sent to the client.
 type serverTranscriptionMsg struct {
-	Type       string  `json:"type"`       // "partial" or "final"
+	Type       string  `json:"type"` // "partial" or "final"
 	Text       string  `json:"text"`
 	Confidence float32 `json:"confidence"`
 }

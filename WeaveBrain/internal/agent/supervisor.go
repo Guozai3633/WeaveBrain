@@ -130,7 +130,7 @@ func buildSystemPrompt(lang string, now time.Time) string {
 ## 输出格式要求
 在你的最终回复中，必须在自然语言回复之后附加一个 JSON 代码块，格式如下:
 
-` + "```" + `json
+`+"```"+`json
 {
   "tags": ["标签1", "标签2"],
   "base_input": "用户原始输入的核心内容摘要",
@@ -140,7 +140,7 @@ func buildSystemPrompt(lang string, now time.Time) string {
   "suggestions": ["建议1", "建议2"],
   "reply": "给用户的自然语言回复"
 }
-` + "```" + `
+`+"```"+`
 
 注意:
 - tags: 2-5 个关键词标签，用于分类检索

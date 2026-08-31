@@ -9,12 +9,12 @@ import (
 
 // User represents a registered user in the system.
 type User struct {
-	ID           uuid.UUID  `json:"id"`
-	DisplayName  *string    `json:"display_name,omitempty"`
-	AvatarURL    *string    `json:"avatar_url,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
+	ID          uuid.UUID  `json:"id"`
+	DisplayName *string    `json:"display_name,omitempty"`
+	AvatarURL   *string    `json:"avatar_url,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 }
 
 // NewUser creates a new User with default values.
@@ -29,23 +29,23 @@ func NewUser() *User {
 
 // Identity links a user to an OAuth provider.
 type Identity struct {
-	ID          int64      `json:"id"`
-	UserID      uuid.UUID  `json:"user_id"`
-	Provider    string     `json:"provider"`     // "wechat", "qq", "phone"
-	ProviderID  string     `json:"provider_id"`  // Third-party platform ID
-	Phone       *string    `json:"phone,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID         int64     `json:"id"`
+	UserID     uuid.UUID `json:"user_id"`
+	Provider   string    `json:"provider"`    // "wechat", "qq", "phone"
+	ProviderID string    `json:"provider_id"` // Third-party platform ID
+	Phone      *string   `json:"phone,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // Project represents a user's project workspace.
 type Project struct {
-	ID            int64      `json:"id"`
-	UserID        uuid.UUID  `json:"user_id"`
-	Name          string     `json:"name"`
-	DefaultProject bool      `json:"default_project"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-	DeletedAt     *time.Time `json:"deleted_at,omitempty"`
+	ID             int64      `json:"id"`
+	UserID         uuid.UUID  `json:"user_id"`
+	Name           string     `json:"name"`
+	DefaultProject bool       `json:"default_project"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	DeletedAt      *time.Time `json:"deleted_at,omitempty"`
 }
 
 // Idea is the core entity - a user's captured thought.
@@ -71,9 +71,9 @@ func NewIdea() *Idea {
 
 // UserProfile holds the long-term user profile data.
 type UserProfile struct {
-	UserID       uuid.UUID  `json:"user_id"`
-	ProfileData  map[string]any `json:"profile_data"`
-	LastUpdated  time.Time  `json:"last_updated"`
+	UserID      uuid.UUID      `json:"user_id"`
+	ProfileData map[string]any `json:"profile_data"`
+	LastUpdated time.Time      `json:"last_updated"`
 }
 
 // NewUserProfile creates a new UserProfile.
@@ -87,29 +87,29 @@ func NewUserProfile(userID uuid.UUID) *UserProfile {
 
 // Reminder represents a scheduled notification.
 type Reminder struct {
-	ID             int64      `json:"id"`
-	UserID         uuid.UUID  `json:"user_id"`
-	ProjectID      *int64     `json:"project_id,omitempty"`
-	TriggerTime    time.Time  `json:"trigger_time"`
-	Message        string     `json:"message"`
-	Status         string     `json:"status"` // "pending", "triggered", "cancelled"
-	CreatedAt      time.Time  `json:"created_at"`
+	ID          int64     `json:"id"`
+	UserID      uuid.UUID `json:"user_id"`
+	ProjectID   *int64    `json:"project_id,omitempty"`
+	TriggerTime time.Time `json:"trigger_time"`
+	Message     string    `json:"message"`
+	Status      string    `json:"status"` // "pending", "triggered", "cancelled"
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // WorkflowRun tracks a Temporal workflow execution.
 type WorkflowRun struct {
-	ID           int64           `json:"id"`
-	WorkflowID   string          `json:"workflow_id"`
-	WorkflowType string          `json:"workflow_type"`
-	UserID       uuid.UUID       `json:"user_id"`
-	Status       string          `json:"status"` // "running", "completed", "failed", "cancelled"
-	Input        map[string]any  `json:"input"`
-	Output       map[string]any  `json:"output,omitempty"`
-	Error        *string         `json:"error,omitempty"`
-	StartedAt    time.Time       `json:"started_at"`
-	CompletedAt  *time.Time      `json:"completed_at,omitempty"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	ID           int64          `json:"id"`
+	WorkflowID   string         `json:"workflow_id"`
+	WorkflowType string         `json:"workflow_type"`
+	UserID       uuid.UUID      `json:"user_id"`
+	Status       string         `json:"status"` // "running", "completed", "failed", "cancelled"
+	Input        map[string]any `json:"input"`
+	Output       map[string]any `json:"output,omitempty"`
+	Error        *string        `json:"error,omitempty"`
+	StartedAt    time.Time      `json:"started_at"`
+	CompletedAt  *time.Time     `json:"completed_at,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
 }
 
 // MCPAuditLog records a single tool invocation for audit purposes.
@@ -124,4 +124,15 @@ type MCPAuditLog struct {
 	Success    bool           `json:"success"`
 	ErrorMsg   *string        `json:"error_msg,omitempty"`
 	CreatedAt  time.Time      `json:"created_at"`
+}
+
+// UserMcpConfig stores encrypted credentials for a specific MCP tool per user.
+type UserMcpConfig struct {
+	ID                   int64     `json:"id"`
+	UserID               uuid.UUID `json:"user_id"`
+	ToolNamespace        string    `json:"tool_namespace"` // e.g., "notion", "email"
+	EncryptedCredentials []byte    `json:"-"`              // Stored as BYTEA, never serialize to JSON
+	Enabled              bool      `json:"enabled"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }

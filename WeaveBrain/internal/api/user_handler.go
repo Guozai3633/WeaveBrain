@@ -30,9 +30,22 @@ func (s *Server) handleGetMe(c *gin.Context) {
 }
 
 func (s *Server) handleGetUser(c *gin.Context) {
+	currentUserID, ok := getCurrentUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+
+	// Only the user themselves may read their profile. Return 404 for others
+	// to avoid leaking whether the target user exists.
+	if id != currentUserID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
 

@@ -19,9 +19,9 @@ func (s *Server) setupReminderRoutes(group *gin.RouterGroup) {
 }
 
 type CreateReminderRequest struct {
-	ProjectID   *int64     `json:"project_id,omitempty"`
-	TriggerTime time.Time  `json:"trigger_time" binding:"required"`
-	Message     string     `json:"message" binding:"required"`
+	ProjectID   *int64    `json:"project_id,omitempty"`
+	TriggerTime time.Time `json:"trigger_time" binding:"required"`
+	Message     string    `json:"message" binding:"required"`
 }
 
 func (s *Server) handleCreateReminder(c *gin.Context) {
@@ -47,7 +47,7 @@ func (s *Server) handleCreateReminder(c *gin.Context) {
 }
 
 func (s *Server) handleListReminders(c *gin.Context) {
-	_, ok := getCurrentUserID(c)
+	userID, ok := getCurrentUserID(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
@@ -61,7 +61,7 @@ func (s *Server) handleListReminders(c *gin.Context) {
 		return
 	}
 
-	reminders, err := s.services.Reminder.GetPending(c.Request.Context(), before, 50)
+	reminders, err := s.services.Reminder.GetPendingByUser(c.Request.Context(), userID, before, 50)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list reminders"})
 		return

@@ -1,11 +1,13 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"weavebrain/internal/entity"
+	"weavebrain/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,7 +22,7 @@ func (s *Server) setupIdeaRoutes(group *gin.RouterGroup) {
 
 type CreateIdeaRequest struct {
 	RawInput       string         `json:"raw_input" binding:"required"`
-	StructuredData map[string]any  `json:"structured_data"`
+	StructuredData map[string]any `json:"structured_data"`
 	Tags           []string       `json:"tags"`
 }
 
@@ -47,6 +49,10 @@ func (s *Server) handleCreateIdea(c *gin.Context) {
 
 	idea, err := s.services.Idea.Create(c.Request.Context(), projectID, userID, req.RawInput, req.StructuredData, req.Tags)
 	if err != nil {
+		if errors.Is(err, service.ErrProjectForbidden) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create idea"})
 		return
 	}
@@ -55,7 +61,7 @@ func (s *Server) handleCreateIdea(c *gin.Context) {
 }
 
 func (s *Server) handleListIdeas(c *gin.Context) {
-	_, ok := getCurrentUserID(c)
+	userID, ok := getCurrentUserID(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
@@ -86,9 +92,9 @@ func (s *Server) handleListIdeas(c *gin.Context) {
 	var total int64
 
 	if search != "" || len(tags) > 0 {
-		ideas, total, err = s.services.Idea.Search(c.Request.Context(), projectID, search, tags, page, limit)
+		ideas, total, err = s.services.Idea.Search(c.Request.Context(), userID, projectID, search, tags, page, limit)
 	} else {
-		ideas, total, err = s.services.Idea.ListByProject(c.Request.Context(), projectID, page, limit)
+		ideas, total, err = s.services.Idea.ListByProject(c.Request.Context(), userID, projectID, page, limit)
 	}
 
 	if err != nil {
@@ -102,10 +108,10 @@ func (s *Server) handleListIdeas(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"ideas":  resp,
-		"total":  total,
-		"page":   page,
-		"limit":  limit,
+		"ideas": resp,
+		"total": total,
+		"page":  page,
+		"limit": limit,
 	})
 }
 
@@ -162,7 +168,7 @@ func (s *Server) handleUpdateIdea(c *gin.Context) {
 
 	var req struct {
 		RawInput       string         `json:"raw_input"`
-		StructuredData map[string]any  `json:"structured_data"`
+		StructuredData map[string]any `json:"structured_data"`
 		Tags           []string       `json:"tags"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -212,13 +218,13 @@ func (s *Server) handleDeleteIdea(c *gin.Context) {
 
 func toIdeaResponse(i *entity.Idea) map[string]any {
 	resp := map[string]any{
-		"id":           i.ID,
-		"project_id":   i.ProjectID,
-		"user_id":      i.UserID.String(),
-		"raw_input":    i.RawInput,
-		"tags":         i.Tags,
-		"created_at":   i.CreatedAt,
-		"updated_at":   i.UpdatedAt,
+		"id":         i.ID,
+		"project_id": i.ProjectID,
+		"user_id":    i.UserID.String(),
+		"raw_input":  i.RawInput,
+		"tags":       i.Tags,
+		"created_at": i.CreatedAt,
+		"updated_at": i.UpdatedAt,
 	}
 	if i.StructuredData != nil {
 		resp["structured_data"] = i.StructuredData

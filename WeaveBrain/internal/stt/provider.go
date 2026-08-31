@@ -18,6 +18,11 @@ type STTProvider interface {
 	// audio stream is exhausted or the context is cancelled.
 	StreamRecognize(ctx context.Context, audioStream <-chan []byte) (<-chan TranscriptionResult, error)
 
+	// RecognizeFile transcribes a complete audio file (e.g. an uploaded WAV/AAC).
+	// The final transcript text is returned; implementations must not lose the
+	// tail of the utterance just because a streaming session ended.
+	RecognizeFile(ctx context.Context, audioPath string) (TranscriptionResult, error)
+
 	// Close releases any resources held by the provider.
 	Close() error
 }

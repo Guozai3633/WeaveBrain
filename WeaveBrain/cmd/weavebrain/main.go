@@ -11,21 +11,22 @@ import (
 	"syscall"
 	"time"
 
+	"weavebrain/internal/agent"
 	"weavebrain/internal/api"
 	"weavebrain/internal/db/repository"
 	"weavebrain/internal/embedding"
 	ollamaemb "weavebrain/internal/embedding/ollama"
+	"weavebrain/internal/mcp"
 	"weavebrain/internal/ratelimit"
 	"weavebrain/internal/review"
-	mockreview "weavebrain/internal/review/mock"
 	llmreview "weavebrain/internal/review/llm"
+	mockreview "weavebrain/internal/review/mock"
 	"weavebrain/internal/service"
 	"weavebrain/internal/stt"
 	funasrstt "weavebrain/internal/stt/funasr"
 	mockstt "weavebrain/internal/stt/mock"
 	"weavebrain/internal/workflow"
 	"weavebrain/pkg/auth"
-	"weavebrain/internal/agent"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -59,8 +60,15 @@ func main() {
 	// Initialize repositories via DBStore
 	repos := repository.NewFromPool(pool)
 
+	// Encryption key configuration
+	encKeyStr := getEnvOrDefault("ENCRYPTION_KEY", "default-32-byte-encryption-key-!")
+	if len(encKeyStr) != 32 {
+		log.Fatalf("ENCRYPTION_KEY must be exactly 32 bytes long")
+	}
+	encryptionKey := []byte(encKeyStr)
+
 	// Initialize services
-	services := service.New(repos)
+	services := service.New(repos, encryptionKey)
 
 	// Initialize STT provider (configurable via STT_PROVIDER env)
 	var sttProvider stt.STTProvider
@@ -78,6 +86,21 @@ func main() {
 		log.Println("STT service initialized (mock provider)")
 	}
 	services.STT = service.NewSTTService(sttProvider)
+
+	// Initialize audio file store + audio service (chunked uploads + STT)
+	audioStoreDir := getEnvOrDefault("AUDIO_STORE_DIR", "./data/audio")
+	audioStore, err := service.NewLocalAudioFileStore(audioStoreDir)
+	if err != nil {
+		log.Fatalf("Failed to initialize audio store: %v", err)
+	}
+	services.Audio = service.NewAudioService(
+		repos.AudioAsset,
+		repos.Transcript,
+		repos.Capture,
+		audioStore,
+		sttProvider,
+	)
+	log.Printf("Audio service initialized (store=%s)", audioStoreDir)
 
 	// Initialize Review provider (configurable via REVIEW_PROVIDER env)
 	var reviewSvc *review.Service
@@ -139,6 +162,27 @@ func main() {
 	services.Idea.SetEmbeddingService(embeddingSvc)
 	services.Agent.SetEmbeddingService(embeddingSvc)
 
+	// Connect local MCP servers
+	notionCmd, notionArgs := getMCPCommand("notion")
+	if err := services.Agent.ConnectMCPServer(context.Background(), mcp.ServerConfig{
+		Name:    "notion",
+		Type:    "stdio",
+		Command: notionCmd,
+		Args:    notionArgs,
+	}); err != nil {
+		log.Printf("Warning: failed to connect notion MCP: %v", err)
+	}
+
+	emailCmd, emailArgs := getMCPCommand("email")
+	if err := services.Agent.ConnectMCPServer(context.Background(), mcp.ServerConfig{
+		Name:    "email",
+		Type:    "stdio",
+		Command: emailCmd,
+		Args:    emailArgs,
+	}); err != nil {
+		log.Printf("Warning: failed to connect email MCP: %v", err)
+	}
+
 	// Initialize Agent (non-blocking, can fail gracefully if LLM not available)
 	go func() {
 		if err := services.Agent.Init(context.Background()); err != nil {
@@ -187,7 +231,7 @@ func main() {
 	}
 
 	// Initialize HTTP server
-	server := api.NewServer(port, services, tokenCfg, sttProviderName, reviewSvc, limiter)
+	server := api.NewServer(port, services, tokenCfg, sttProviderName, reviewSvc, limiter, encryptionKey)
 
 	// Graceful shutdown
 	stop := make(chan os.Signal, 1)
@@ -203,6 +247,13 @@ func main() {
 		}
 	}()
 
+	// Start the background outbox worker that enriches captures according to
+	// the policy snapshot recorded at creation time.
+	if services.OutboxWorker != nil {
+		services.OutboxWorker.Start()
+		log.Println("Outbox worker started")
+	}
+
 	<-stop
 	log.Println("Shutting down...")
 
@@ -215,6 +266,10 @@ func main() {
 	}
 	if services.STT != nil {
 		services.STT.Close()
+	}
+	if services.OutboxWorker != nil {
+		services.OutboxWorker.Stop()
+		log.Println("Outbox worker stopped")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -243,6 +298,23 @@ func getEnvOrDefault(key, defaultVal string) string {
 		return val
 	}
 	return defaultVal
+}
+
+func getMCPCommand(name string) (string, []string) {
+	// For production, the binary is compiled and placed in the same directory (or /usr/local/bin)
+	binPath := "./mcp-" + name
+	if _, err := os.Stat(binPath); err == nil {
+		return binPath, []string{}
+	}
+
+	// Check /usr/local/bin/ path for docker
+	dockerBinPath := "/usr/local/bin/mcp-" + name
+	if _, err := os.Stat(dockerBinPath); err == nil {
+		return dockerBinPath, []string{}
+	}
+
+	// For development, use go run
+	return "go", []string{"run", "./cmd/mcp-" + name + "/main.go"}
 }
 
 func runBackfillEmbeddings() {

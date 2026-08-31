@@ -3,15 +3,29 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 
+	"weavebrain/pkg/auth"
+
 	"github.com/cloudwego/eino/components/tool"
 	einoSchema "github.com/cloudwego/eino/schema"
+	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
+var (
+	ErrNoCredentials = errors.New("no credentials configured for this tool")
+	ErrToolDisabled  = errors.New("tool is disabled by user")
+)
+
+// CredentialProvider is used to retrieve credentials for a tool dynamically.
+type CredentialProvider interface {
+	GetCredential(ctx context.Context, userID uuid.UUID, namespace string) (string, error)
+}
 
 // ServerConfig holds configuration for connecting to an MCP server.
 type ServerConfig struct {
@@ -24,8 +38,9 @@ type ServerConfig struct {
 
 // Registry manages MCP server connections and provides tools as Eino InvokableTools.
 type Registry struct {
-	mu      sync.RWMutex
-	servers map[string]*mcpServer
+	mu           sync.RWMutex
+	servers      map[string]*mcpServer
+	credProvider CredentialProvider
 }
 
 type mcpServer struct {
@@ -35,9 +50,10 @@ type mcpServer struct {
 }
 
 // NewRegistry creates a new MCP tool registry.
-func NewRegistry() *Registry {
+func NewRegistry(credProvider CredentialProvider) *Registry {
 	return &Registry{
-		servers: make(map[string]*mcpServer),
+		servers:      make(map[string]*mcpServer),
+		credProvider: credProvider,
 	}
 }
 
@@ -107,9 +123,10 @@ func (r *Registry) GetEinoTools() []tool.BaseTool {
 	for _, server := range r.servers {
 		for _, mcpTool := range server.tools {
 			tools = append(tools, &mcpEinoTool{
-				serverName: server.config.Name,
-				client:     server.client,
-				mcpTool:    mcpTool,
+				serverName:   server.config.Name,
+				client:       server.client,
+				mcpTool:      mcpTool,
+				credProvider: r.credProvider,
 			})
 		}
 	}
@@ -143,9 +160,10 @@ type ToolMeta struct {
 
 // mcpEinoTool wraps an MCP tool as an Eino InvokableTool.
 type mcpEinoTool struct {
-	serverName string
-	client     *client.Client
-	mcpTool    mcp.Tool
+	serverName   string
+	client       *client.Client
+	mcpTool      mcp.Tool
+	credProvider CredentialProvider
 }
 
 func (t *mcpEinoTool) Info(ctx context.Context) (*einoSchema.ToolInfo, error) {
@@ -160,6 +178,32 @@ func (t *mcpEinoTool) InvokableRun(ctx context.Context, argumentsInJSON string, 
 	var args map[string]interface{}
 	if err := json.Unmarshal([]byte(argumentsInJSON), &args); err != nil {
 		return "", fmt.Errorf("invalid tool arguments: %w", err)
+	}
+
+	// Dynamic credentials injection
+	if t.credProvider != nil {
+		if uidVal := ctx.Value(auth.ContextKeyUserID); uidVal != nil {
+			var uid uuid.UUID
+			if uidStr, ok := uidVal.(string); ok {
+				uid, _ = uuid.Parse(uidStr)
+			} else if u, ok := uidVal.(uuid.UUID); ok {
+				uid = u
+			}
+
+			if uid != uuid.Nil {
+				cred, err := t.credProvider.GetCredential(ctx, uid, t.serverName)
+				if err != nil {
+					if err == ErrNoCredentials || err == ErrToolDisabled {
+						// Return friendly message to LLM so it can guide the user
+						return fmt.Sprintf("Error: %v. Please tell the user to configure %s integration in the settings page.", err, t.serverName), nil
+					}
+					return "", fmt.Errorf("failed to retrieve credentials for %s: %w", t.serverName, err)
+				}
+				if cred != "" {
+					args["_credentials"] = cred
+				}
+			}
+		}
 	}
 
 	// Call the MCP tool
