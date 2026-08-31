@@ -12,16 +12,15 @@ class IdeaDetailScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final sd = idea.structuredData;
     final feasibility = sd?['feasibility'] as String?;
-    final suggestions = (sd?['suggestions'] as List<dynamic>?)
+    final suggestions =
+        (sd?['suggestions'] as List<dynamic>?)
             ?.map((e) => e.toString())
             .toList() ??
         [];
     final aiMeanEnv = sd?['ai_mean_env'] as String?;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('想法详情'),
-      ),
+      appBar: AppBar(title: const Text('想法详情')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -51,8 +50,10 @@ class IdeaDetailScreen extends StatelessWidget {
                 children: idea.tags.map((tag) {
                   return Chip(
                     label: Text(tag),
-                    backgroundColor:
-                        _tagColor(context, feasibility).withValues(alpha: 0.15),
+                    backgroundColor: _tagColor(
+                      context,
+                      feasibility,
+                    ).withValues(alpha: 0.15),
                   );
                 }).toList(),
               ),
@@ -72,11 +73,10 @@ class IdeaDetailScreen extends StatelessWidget {
                       const SizedBox(width: 12),
                       Text(
                         _feasibilityLabel(feasibility),
-                        style:
-                            Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                  color: _feasibilityColor(context, feasibility),
-                                  fontWeight: FontWeight.bold,
-                                ),
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: _feasibilityColor(context, feasibility),
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ],
                   ),
@@ -92,8 +92,10 @@ class IdeaDetailScreen extends StatelessWidget {
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
-                  child: Text(aiMeanEnv,
-                      style: Theme.of(context).textTheme.bodyMedium),
+                  child: Text(
+                    aiMeanEnv,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -129,26 +131,32 @@ class IdeaDetailScreen extends StatelessWidget {
             // Structured data (raw, for debugging)
             if (sd != null && sd.isNotEmpty) ...[
               ExpansionTile(
-                title: Text('原始结构化数据',
-                    style: Theme.of(context).textTheme.labelLarge),
+                title: Text(
+                  '原始结构化数据',
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
                 children: sd.entries.map((entry) {
                   return Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 4,
+                    ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         SizedBox(
                           width: 120,
-                          child: Text(entry.key,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(fontWeight: FontWeight.bold)),
+                          child: Text(
+                            entry.key,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
                         ),
                         Expanded(
-                          child: Text(entry.value.toString(),
-                              style: Theme.of(context).textTheme.bodySmall),
+                          child: Text(
+                            entry.value.toString(),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
                         ),
                       ],
                     ),
@@ -162,9 +170,9 @@ class IdeaDetailScreen extends StatelessWidget {
               const SizedBox(height: 16),
               Text(
                 '创建于 ${DateFormat('yyyy-MM-dd HH:mm').format(idea.createdAt!)}',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.grey,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: Colors.grey),
               ),
             ],
           ],

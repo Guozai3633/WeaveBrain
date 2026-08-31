@@ -50,7 +50,10 @@ class ProjectSelector extends ConsumerWidget {
               const Icon(Icons.error_outline, color: Colors.red),
               const SizedBox(width: 12),
               Expanded(
-                child: Text('加载失败', style: Theme.of(context).textTheme.bodyLarge),
+                child: Text(
+                  '加载失败',
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
               ),
               IconButton(
                 icon: const Icon(Icons.refresh),
@@ -70,7 +73,10 @@ class ProjectSelector extends ConsumerWidget {
                   const Icon(Icons.folder_outlined),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text('暂无项目', style: Theme.of(context).textTheme.bodyLarge),
+                    child: Text(
+                      '暂无项目',
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
                   ),
                 ],
               ),
@@ -79,11 +85,14 @@ class ProjectSelector extends ConsumerWidget {
         }
 
         // Auto-select default project if nothing selected
-        final effectiveId = selectedProjectId ??
-            projects.firstWhere(
-              (p) => p.defaultProject,
-              orElse: () => projects.first,
-            ).id;
+        final effectiveId =
+            selectedProjectId ??
+            projects
+                .firstWhere(
+                  (p) => p.defaultProject,
+                  orElse: () => projects.first,
+                )
+                .id;
 
         return Card(
           child: Padding(
@@ -116,9 +125,9 @@ class ProjectSelector extends ConsumerWidget {
                                 vertical: 2,
                               ),
                               decoration: BoxDecoration(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .primaryContainer,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.primaryContainer,
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(

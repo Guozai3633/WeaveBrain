@@ -154,46 +154,44 @@ class _IdeasScreenState extends ConsumerState<IdeasScreen> {
         // Ideas list
         Expanded(
           child: switch (ideasState) {
-            IdeasInitial() || IdeasLoading() =>
-              const Center(child: CircularProgressIndicator()),
+            IdeasInitial() ||
+            IdeasLoading() => const Center(child: CircularProgressIndicator()),
             IdeasError(:final message) => Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(message),
-                    const SizedBox(height: 16),
-                    OutlinedButton(
-                      onPressed: () => _loadIdeas(),
-                      child: const Text('重试'),
-                    ),
-                  ],
-                ),
-              ),
-            IdeasLoaded(:final ideas, :final hasMore) => ideas.isEmpty
-                ? _buildEmptyState(context)
-                : RefreshIndicator(
-                    onRefresh: () =>
-                        ref.read(ideasNotifierProvider.notifier).refresh(),
-                    child: ListView.builder(
-                      itemCount: ideas.length + (hasMore ? 1 : 0),
-                      itemBuilder: (context, index) {
-                        if (index >= ideas.length) {
-                          ref
-                              .read(ideasNotifierProvider.notifier)
-                              .loadMore();
-                          return const Padding(
-                            padding: EdgeInsets.all(16),
-                            child:
-                                Center(child: CircularProgressIndicator()),
-                          );
-                        }
-                        return IdeaCard(
-                          idea: ideas[index],
-                          onTagTapped: _onTagTapped,
-                        );
-                      },
-                    ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(message),
+                  const SizedBox(height: 16),
+                  OutlinedButton(
+                    onPressed: () => _loadIdeas(),
+                    child: const Text('重试'),
                   ),
+                ],
+              ),
+            ),
+            IdeasLoaded(:final ideas, :final hasMore) =>
+              ideas.isEmpty
+                  ? _buildEmptyState(context)
+                  : RefreshIndicator(
+                      onRefresh: () =>
+                          ref.read(ideasNotifierProvider.notifier).refresh(),
+                      child: ListView.builder(
+                        itemCount: ideas.length + (hasMore ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          if (index >= ideas.length) {
+                            ref.read(ideasNotifierProvider.notifier).loadMore();
+                            return const Padding(
+                              padding: EdgeInsets.all(16),
+                              child: Center(child: CircularProgressIndicator()),
+                            );
+                          }
+                          return IdeaCard(
+                            idea: ideas[index],
+                            onTagTapped: _onTagTapped,
+                          );
+                        },
+                      ),
+                    ),
           },
         ),
       ],
@@ -209,16 +207,16 @@ class _IdeasScreenState extends ConsumerState<IdeasScreen> {
           const SizedBox(height: 16),
           Text(
             '还没有想法',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: Colors.grey,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(color: Colors.grey),
           ),
           const SizedBox(height: 8),
           Text(
             '去语音录入吧',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Colors.grey,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: Colors.grey),
           ),
           const SizedBox(height: 24),
           FilledButton.icon(

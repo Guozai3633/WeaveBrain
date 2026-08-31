@@ -8,8 +8,18 @@ class UserApi {
 
   Future<User> getMe() async {
     final resp = await _client.get('/users/me');
-    final data = resp.data as Map<String, dynamic>;
-    return User.fromJson(data['user'] as Map<String, dynamic>);
+    final data = resp.data;
+    if (data is! Map<String, dynamic>) {
+      throw Exception('服务器返回数据格式错误');
+    }
+    if (data.containsKey('error')) {
+      throw Exception(data['error']);
+    }
+    final userJson = data['user'] as Map<String, dynamic>?;
+    if (userJson == null) {
+      throw Exception('获取用户信息失败');
+    }
+    return User.fromJson(userJson);
   }
 
   Future<User> updateProfile(
@@ -22,7 +32,17 @@ class UserApi {
     if (avatarUrl != null) body['avatar_url'] = avatarUrl;
 
     final resp = await _client.put('/users/$userId/profile', body: body);
-    final data = resp.data as Map<String, dynamic>;
-    return User.fromJson(data['user'] as Map<String, dynamic>);
+    final data = resp.data;
+    if (data is! Map<String, dynamic>) {
+      throw Exception('服务器返回数据格式错误');
+    }
+    if (data.containsKey('error')) {
+      throw Exception(data['error']);
+    }
+    final userJson = data['user'] as Map<String, dynamic>?;
+    if (userJson == null) {
+      throw Exception('更新用户信息失败');
+    }
+    return User.fromJson(userJson);
   }
 }

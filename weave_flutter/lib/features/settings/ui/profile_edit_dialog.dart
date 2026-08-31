@@ -30,10 +30,7 @@ class _ProfileEditDialogState extends State<ProfileEditDialog> {
       title: const Text('编辑个人信息'),
       content: TextField(
         controller: _controller,
-        decoration: const InputDecoration(
-          labelText: '昵称',
-          hintText: '输入你的昵称',
-        ),
+        decoration: const InputDecoration(labelText: '昵称', hintText: '输入你的昵称'),
         autofocus: true,
         textInputAction: TextInputAction.done,
         onSubmitted: (_) => _submit(),
@@ -43,10 +40,7 @@ class _ProfileEditDialogState extends State<ProfileEditDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('取消'),
         ),
-        FilledButton(
-          onPressed: _submit,
-          child: const Text('保存'),
-        ),
+        FilledButton(onPressed: _submit, child: const Text('保存')),
       ],
     );
   }

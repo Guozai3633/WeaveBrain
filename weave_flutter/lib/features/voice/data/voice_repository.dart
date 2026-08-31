@@ -56,10 +56,7 @@ class VoiceRepository {
   }
 
   void startRecording({String language = 'zh-CN'}) {
-    _channel?.sink.add(jsonEncode({
-      'type': 'start',
-      'language': language,
-    }));
+    _channel?.sink.add(jsonEncode({'type': 'start', 'language': language}));
   }
 
   void sendAudio(List<int> bytes) {

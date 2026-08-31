@@ -22,8 +22,12 @@ class IdeaApi {
     if (tags != null && tags.isNotEmpty) params['tags'] = tags.join(',');
 
     final resp = await _client.get('/ideas', queryParams: params);
-    final data = resp.data as Map<String, dynamic>;
-    final ideas = (data['ideas'] as List<dynamic>)
+    final data = _responseData(resp);
+    if (data.containsKey('error')) {
+      throw Exception(data['error']);
+    }
+    final ideasList = data['ideas'] as List<dynamic>? ?? [];
+    final ideas = ideasList
         .map((e) => Idea.fromJson(e as Map<String, dynamic>))
         .toList();
     final total = data['total'] as int? ?? ideas.length;
@@ -41,17 +45,39 @@ class IdeaApi {
       queryParams: {'project_id': projectId},
       body: {
         'raw_input': rawInput,
+        // Keep the existing request shape until the V3 client replaces this API.
+        // ignore: use_null_aware_elements
         if (structuredData != null) 'structured_data': structuredData,
         if (tags != null && tags.isNotEmpty) 'tags': tags,
       },
     );
-    final data = resp.data as Map<String, dynamic>;
-    return Idea.fromJson(data['idea'] as Map<String, dynamic>);
+    final data = _responseData(resp);
+    if (data.containsKey('error')) {
+      throw Exception(data['error']);
+    }
+    final ideaJson = data['idea'] as Map<String, dynamic>?;
+    if (ideaJson == null) {
+      throw Exception('创建想法失败: 响应数据为空');
+    }
+    return Idea.fromJson(ideaJson);
   }
 
   Future<Idea> getIdea(int id) async {
     final resp = await _client.get('/ideas/$id');
-    final data = resp.data as Map<String, dynamic>;
-    return Idea.fromJson(data['idea'] as Map<String, dynamic>);
+    final data = _responseData(resp);
+    if (data.containsKey('error')) {
+      throw Exception(data['error']);
+    }
+    final ideaJson = data['idea'] as Map<String, dynamic>?;
+    if (ideaJson == null) {
+      throw Exception('获取想法失败: 响应数据为空');
+    }
+    return Idea.fromJson(ideaJson);
+  }
+
+  Map<String, dynamic> _responseData(dynamic resp) {
+    final data = resp.data;
+    if (data is Map<String, dynamic>) return data;
+    throw Exception('服务器返回数据格式错误');
   }
 }

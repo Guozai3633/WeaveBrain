@@ -37,17 +37,21 @@ class IdeaCard extends StatelessWidget {
                   spacing: 6,
                   runSpacing: 4,
                   children: idea.tags
-                      .map((tag) => ActionChip(
-                            label: Text(tag,
-                                style: const TextStyle(fontSize: 12)),
-                            padding: EdgeInsets.zero,
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                            visualDensity: VisualDensity.compact,
-                            onPressed: onTagTapped != null
-                                ? () => onTagTapped!(tag)
-                                : null,
-                          ))
+                      .map(
+                        (tag) => ActionChip(
+                          label: Text(
+                            tag,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          padding: EdgeInsets.zero,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: VisualDensity.compact,
+                          onPressed: onTagTapped != null
+                              ? () => onTagTapped!(tag)
+                              : null,
+                        ),
+                      )
                       .toList(),
                 ),
 
@@ -58,9 +62,9 @@ class IdeaCard extends StatelessWidget {
                 children: [
                   Text(
                     _formatTime(idea.createdAt),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.grey,
-                        ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: Colors.grey),
                   ),
                   const Spacer(),
                   const Icon(Icons.chevron_right, size: 20, color: Colors.grey),

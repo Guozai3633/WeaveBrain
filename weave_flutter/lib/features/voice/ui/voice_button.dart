@@ -6,11 +6,7 @@ class VoiceButton extends StatefulWidget {
   final VoiceButtonState state;
   final VoidCallback onPressed;
 
-  const VoiceButton({
-    super.key,
-    required this.state,
-    required this.onPressed,
-  });
+  const VoiceButton({super.key, required this.state, required this.onPressed});
 
   @override
   State<VoiceButton> createState() => _VoiceButtonState();
@@ -75,10 +71,7 @@ class _VoiceButtonState extends State<VoiceButton>
           final scale = widget.state == VoiceButtonState.recording
               ? 1.0 + (_pulseController.value * 0.1)
               : 1.0;
-          return Transform.scale(
-            scale: scale,
-            child: child,
-          );
+          return Transform.scale(scale: scale, child: child);
         },
         child: Container(
           width: 120,
@@ -90,15 +83,13 @@ class _VoiceButtonState extends State<VoiceButton>
               BoxShadow(
                 color: _buttonColor.withValues(alpha: 0.4),
                 blurRadius: 20,
-                spreadRadius: widget.state == VoiceButtonState.recording ? 8 : 2,
+                spreadRadius: widget.state == VoiceButtonState.recording
+                    ? 8
+                    : 2,
               ),
             ],
           ),
-          child: Icon(
-            _icon,
-            size: 48,
-            color: Colors.white,
-          ),
+          child: Icon(_icon, size: 48, color: Colors.white),
         ),
       ),
     );

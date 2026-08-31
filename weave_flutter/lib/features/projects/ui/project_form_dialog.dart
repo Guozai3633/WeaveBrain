@@ -64,13 +64,10 @@ class _ProjectFormDialogState extends State<ProjectFormDialog> {
           onPressed: _nameController.text.trim().isEmpty
               ? null
               : () {
-                  Navigator.pop(
-                    context,
-                    (
-                      name: _nameController.text.trim(),
-                      defaultProject: _defaultProject,
-                    ),
-                  );
+                  Navigator.pop(context, (
+                    name: _nameController.text.trim(),
+                    defaultProject: _defaultProject,
+                  ));
                 },
           child: Text(_isEditing ? '保存' : '创建'),
         ),

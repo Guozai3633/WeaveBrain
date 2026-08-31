@@ -42,6 +42,12 @@ dependencies:
   cupertino_icons: ^1.0.8
   record: ^7.1.0
   path_provider: ^2.1.5
+  path: ^1.9.1
+  sembast: ^3.8.9+1
+  sembast_web: ^2.4.5+1
+  connectivity_plus: ^7.3.1
+  uuid: ^4.6.0
+  crypto: ^3.0.6
 
 dev_dependencies:
   flutter_test:

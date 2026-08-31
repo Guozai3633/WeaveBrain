@@ -55,7 +55,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
     }
   }
 
-  Future<void> updateProject(int id, String name, {bool? defaultProject}) async {
+  Future<void> updateProject(
+    int id,
+    String name, {
+    bool? defaultProject,
+  }) async {
     try {
       await _api.updateProject(id, name: name, defaultProject: defaultProject);
       await loadProjects();
@@ -74,5 +78,6 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 }
 
-final projectNotifierProvider =
-    NotifierProvider<ProjectNotifier, ProjectState>(() => ProjectNotifier());
+final projectNotifierProvider = NotifierProvider<ProjectNotifier, ProjectState>(
+  () => ProjectNotifier(),
+);

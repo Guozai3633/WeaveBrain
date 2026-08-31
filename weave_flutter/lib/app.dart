@@ -4,11 +4,19 @@ import 'package:go_router/go_router.dart';
 
 import '../features/auth/ui/login_screen.dart';
 import '../features/auth/ui/register_screen.dart';
+import '../features/capture/ui/capture_screen.dart';
+import '../features/capture/ui/recording_screen.dart';
+import '../features/capture/ui/transcript_edit_screen.dart';
+import '../features/echo/ui/echo_screen.dart';
 import '../features/ideas/ui/idea_detail_screen.dart';
 import '../features/ideas/ui/ideas_screen.dart';
+import '../features/memories/ui/memory_detail_screen.dart';
+import '../features/memories/ui/memory_list_screen.dart';
 import '../features/projects/ui/project_list_screen.dart';
+import '../features/settings/ui/ai_settings_screen.dart';
+import '../features/settings/ui/mcp_settings_screen.dart';
 import '../features/settings/ui/settings_screen.dart';
-import '../features/voice/ui/voice_screen.dart';
+import '../features/timeline/ui/timeline_screen.dart';
 import '../shared/auth/auth_state.dart';
 import '../shared/models/idea.dart';
 import '../shared/widgets/app_scaffold.dart';
@@ -20,22 +28,48 @@ final routerProvider = Provider<GoRouter>((ref) {
     initialLocation: '/',
     redirect: (context, state) {
       final isLoggedIn = authState is Authenticated;
-      final isAuthRoute =
-          state.matchedLocation == '/login' ||
-          state.matchedLocation == '/register';
+      final matched = state.matchedLocation;
+      final isAuthRoute = matched == '/login' || matched == '/register';
 
-      if (!isLoggedIn && !isAuthRoute) return '/login';
-      if (isLoggedIn && isAuthRoute) return '/';
+      if (!isLoggedIn) {
+        if (isAuthRoute) return null;
+        // 游客默认落在全局捕捉页。
+        if (matched == '/') return '/capture';
+        final isGuestAccessible =
+            matched == '/capture' ||
+            matched == '/record' ||
+            matched == '/echo' ||
+            matched.startsWith('/captures/');
+        if (!isGuestAccessible) return '/login';
+        return null;
+      }
+      if (isAuthRoute) return '/';
       return null;
     },
     routes: [
-      GoRoute(
-        path: '/login',
-        builder: (context, state) => const LoginScreen(),
-      ),
+      GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
       GoRoute(
         path: '/register',
         builder: (context, state) => const RegisterScreen(),
+      ),
+      GoRoute(
+        path: '/record',
+        builder: (context, state) => const RecordingScreen(),
+      ),
+      GoRoute(
+        path: '/captures/:captureId/transcript',
+        builder: (context, state) {
+          final captureId = state.pathParameters['captureId'];
+          if (captureId == null || captureId.isEmpty) {
+            return const Scaffold(body: Center(child: Text('缺少转写参数')));
+          }
+          return TranscriptEditScreen(captureId: captureId);
+        },
+      ),
+      // 隐藏路由：旧功能保留入口，不在底部导航展示。
+      GoRoute(
+        path: '/ideas',
+        builder: (context, state) => const IdeasScreen(),
       ),
       GoRoute(
         path: '/ideas/:id',
@@ -44,36 +78,72 @@ final routerProvider = Provider<GoRouter>((ref) {
           if (idea != null) {
             return IdeaDetailScreen(idea: idea);
           }
-          return const Scaffold(
-            body: Center(child: Text('想法数据未找到')),
-          );
+          return const Scaffold(body: Center(child: Text('想法数据未找到')));
         },
+      ),
+      GoRoute(
+        path: '/timeline',
+        builder: (context, state) => const TimelineScreen(),
       ),
       GoRoute(
         path: '/projects',
         builder: (context, state) => const ProjectListScreen(),
       ),
+      GoRoute(
+        path: '/memories/:captureId',
+        builder: (context, state) {
+          final captureId = state.pathParameters['captureId'];
+          if (captureId == null || captureId.isEmpty) {
+            return const Scaffold(body: Center(child: Text('缺少记忆参数')));
+          }
+          return MemoryDetailScreen(captureId: captureId);
+        },
+      ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, shell) => AppScaffold(navigationShell: shell),
         branches: [
-          StatefulShellBranch(routes: [
-            GoRoute(
-              path: '/',
-              builder: (context, state) => const VoiceScreen(),
-            ),
-          ]),
-          StatefulShellBranch(routes: [
-            GoRoute(
-              path: '/ideas',
-              builder: (context, state) => const IdeasScreen(),
-            ),
-          ]),
-          StatefulShellBranch(routes: [
-            GoRoute(
-              path: '/settings',
-              builder: (context, state) => const SettingsScreen(),
-            ),
-          ]),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/',
+                builder: (context, state) => const MemoryListScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/capture',
+                builder: (context, state) => const CaptureScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/echo',
+                builder: (context, state) => const EchoScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/settings',
+                builder: (context, state) => const SettingsScreen(),
+                routes: [
+                  GoRoute(
+                    path: 'mcp',
+                    builder: (context, state) => const McpSettingsScreen(),
+                  ),
+                  GoRoute(
+                    path: 'ai',
+                    builder: (context, state) => const AISettingsScreen(),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ],
       ),
     ],

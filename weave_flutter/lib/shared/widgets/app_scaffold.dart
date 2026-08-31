@@ -18,21 +18,27 @@ class AppScaffold extends StatelessWidget {
             initialLocation: index == navigationShell.currentIndex,
           );
         },
+        height: 64,
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.mic_outlined),
+            icon: Icon(Icons.library_books_outlined),
+            selectedIcon: Icon(Icons.library_books),
+            label: '记忆',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.mic_none),
             selectedIcon: Icon(Icons.mic),
-            label: '语音',
+            label: '捕捉',
           ),
           NavigationDestination(
-            icon: Icon(Icons.lightbulb_outline),
-            selectedIcon: Icon(Icons.lightbulb),
-            label: '想法簿',
+            icon: Icon(Icons.auto_awesome_outlined),
+            selectedIcon: Icon(Icons.auto_awesome),
+            label: '回响',
           ),
           NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: '设置',
+            icon: Icon(Icons.person_outline),
+            selectedIcon: Icon(Icons.person),
+            label: '我的',
           ),
         ],
       ),

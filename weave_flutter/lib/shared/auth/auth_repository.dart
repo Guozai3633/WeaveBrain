@@ -11,7 +11,7 @@ class AuthRepository {
   final FlutterSecureStorage _storage;
 
   AuthRepository({FlutterSecureStorage? storage})
-      : _storage = storage ?? const FlutterSecureStorage();
+    : _storage = storage ?? const FlutterSecureStorage();
 
   Future<String?> getToken() => _storage.read(key: _tokenKey);
 

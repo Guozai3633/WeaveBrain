@@ -28,30 +28,30 @@ class _ProjectListScreenState extends ConsumerState<ProjectListScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('项目管理')),
       body: switch (state) {
-        ProjectInitial() || ProjectLoading() =>
-          const Center(child: CircularProgressIndicator()),
+        ProjectInitial() ||
+        ProjectLoading() => const Center(child: CircularProgressIndicator()),
         ProjectError(:final message) => Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(message),
-                const SizedBox(height: 16),
-                OutlinedButton(
-                  onPressed: () => ref
-                      .read(projectNotifierProvider.notifier)
-                      .loadProjects(),
-                  child: const Text('重试'),
-                ),
-              ],
-            ),
-          ),
-        ProjectLoaded(:final projects) => projects.isEmpty
-            ? _buildEmptyState(context)
-            : ListView.builder(
-                itemCount: projects.length,
-                itemBuilder: (context, index) =>
-                    _buildProjectTile(context, projects[index]),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(message),
+              const SizedBox(height: 16),
+              OutlinedButton(
+                onPressed: () =>
+                    ref.read(projectNotifierProvider.notifier).loadProjects(),
+                child: const Text('重试'),
               ),
+            ],
+          ),
+        ),
+        ProjectLoaded(:final projects) =>
+          projects.isEmpty
+              ? _buildEmptyState(context)
+              : ListView.builder(
+                  itemCount: projects.length,
+                  itemBuilder: (context, index) =>
+                      _buildProjectTile(context, projects[index]),
+                ),
       },
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showCreateDialog(context),
@@ -69,18 +69,16 @@ class _ProjectListScreenState extends ConsumerState<ProjectListScreen> {
           const SizedBox(height: 16),
           Text(
             '还没有项目',
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(color: Colors.grey),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(color: Colors.grey),
           ),
           const SizedBox(height: 8),
           Text(
             '点击右下角按钮创建第一个项目',
-            style: Theme.of(context)
-                .textTheme
-                .bodyMedium
-                ?.copyWith(color: Colors.grey),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: Colors.grey),
           ),
         ],
       ),
@@ -130,8 +128,11 @@ class _ProjectListScreenState extends ConsumerState<ProjectListScreen> {
     if (result != null && mounted) {
       await ref
           .read(projectNotifierProvider.notifier)
-          .updateProject(project.id, result.name,
-              defaultProject: result.defaultProject);
+          .updateProject(
+            project.id,
+            result.name,
+            defaultProject: result.defaultProject,
+          );
     }
   }
 
@@ -141,8 +142,11 @@ class _ProjectListScreenState extends ConsumerState<ProjectListScreen> {
       case 'edit':
         await _showEditDialog(context, project);
       case 'default':
-        await notifier.updateProject(project.id, project.name,
-            defaultProject: true);
+        await notifier.updateProject(
+          project.id,
+          project.name,
+          defaultProject: true,
+        );
       case 'delete':
         final confirmed = await showDialog<bool>(
           context: context,
@@ -156,8 +160,7 @@ class _ProjectListScreenState extends ConsumerState<ProjectListScreen> {
               ),
               TextButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('删除',
-                    style: TextStyle(color: Colors.red)),
+                child: const Text('删除', style: TextStyle(color: Colors.red)),
               ),
             ],
           ),

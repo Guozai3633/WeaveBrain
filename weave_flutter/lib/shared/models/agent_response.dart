@@ -22,12 +22,12 @@ class AgentResponse {
       response: json['response'] as String? ?? '',
       ideaId: json['idea_id'] as String?,
       workflowId: json['workflow_id'] as String?,
-      tags: (json['tags'] as List<dynamic>?)
-              ?.map((e) => e.toString())
-              .toList() ??
+      tags:
+          (json['tags'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
           [],
       feasibility: json['feasibility'] as String?,
-      suggestions: (json['suggestions'] as List<dynamic>?)
+      suggestions:
+          (json['suggestions'] as List<dynamic>?)
               ?.map((e) => e.toString())
               .toList() ??
           [],

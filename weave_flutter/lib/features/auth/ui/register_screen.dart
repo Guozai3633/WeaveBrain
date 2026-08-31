@@ -32,7 +32,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       _error = null;
     });
     try {
-      await ref.read(authNotifierProvider.notifier).register(
+      await ref
+          .read(authNotifierProvider.notifier)
+          .register(
             _providerController.text.trim(),
             _providerIdController.text.trim(),
             displayName: _displayNameController.text.trim().isEmpty

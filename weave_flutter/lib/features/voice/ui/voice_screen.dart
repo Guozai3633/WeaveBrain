@@ -21,7 +21,7 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
     final voiceState = ref.watch(voiceNotifierProvider);
 
     return Padding(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
       child: Column(
         children: [
           // Project selector
@@ -39,10 +39,7 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
           const SizedBox(height: 32),
 
           // Status / transcription text
-          Expanded(
-            flex: 3,
-            child: _buildResultArea(context, ref, voiceState),
-          ),
+          Expanded(flex: 3, child: _buildResultArea(context, ref, voiceState)),
         ],
       ),
     );
@@ -59,97 +56,110 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
 
   void _toggleRecording(WidgetRef ref, VoiceState state) {
     final notifier = ref.read(voiceNotifierProvider.notifier);
-    if (state is VoiceIdle || state is VoiceResult || state is VoiceError || state is VoiceSaved) {
+    if (state is VoiceIdle ||
+        state is VoiceResult ||
+        state is VoiceError ||
+        state is VoiceSaved) {
       notifier.startRecording();
-    } else if (state is VoiceRecording) {
+    } else if (state is VoiceRecording || state is VoiceConnecting) {
       notifier.stopRecording();
     }
   }
 
   Widget _buildResultArea(
-      BuildContext context, WidgetRef ref, VoiceState state) {
+    BuildContext context,
+    WidgetRef ref,
+    VoiceState state,
+  ) {
     return switch (state) {
       VoiceIdle() => Text(
-          '点击麦克风开始录音',
-          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: Colors.grey,
-              ),
-          textAlign: TextAlign.center,
-        ),
+        '点击麦克风开始录音',
+        style: Theme.of(
+          context,
+        ).textTheme.bodyLarge?.copyWith(color: Colors.grey),
+        textAlign: TextAlign.center,
+      ),
       VoiceConnecting() => const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('正在连接...'),
-          ],
-        ),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text('正在连接...'),
+        ],
+      ),
       VoiceRecording(:final partialText) => Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('录音中...', style: TextStyle(color: Colors.red)),
-            const SizedBox(height: 16),
-            if (partialText.isNotEmpty)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    partialText,
-                    style: Theme.of(context).textTheme.bodyLarge,
-                  ),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('录音中...', style: TextStyle(color: Colors.red)),
+          const SizedBox(height: 16),
+          if (partialText.isNotEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  partialText,
+                  style: Theme.of(context).textTheme.bodyLarge,
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
+      ),
       VoiceProcessing(:final finalText) => Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 16),
-            Text('正在处理: $finalText'),
-          ],
-        ),
-      VoiceResult(:final text, :final agentResponse) =>
-        _buildStructuredResult(context, ref, text, agentResponse),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: 16),
+          Text('正在处理: $finalText'),
+        ],
+      ),
+      VoiceResult(:final text, :final agentResponse) => _buildStructuredResult(
+        context,
+        ref,
+        text,
+        agentResponse,
+      ),
       VoiceError(:final message) => Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.error_outline,
-                size: 48, color: Theme.of(context).colorScheme.error),
-            const SizedBox(height: 16),
-            Text(message,
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            const SizedBox(height: 16),
-            OutlinedButton(
-              onPressed: () =>
-                  ref.read(voiceNotifierProvider.notifier).reset(),
-              child: const Text('重试'),
-            ),
-          ],
-        ),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.error_outline,
+            size: 48,
+            color: Theme.of(context).colorScheme.error,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            message,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+          const SizedBox(height: 16),
+          OutlinedButton(
+            onPressed: () => ref.read(voiceNotifierProvider.notifier).reset(),
+            child: const Text('重试'),
+          ),
+        ],
+      ),
       VoiceSaving() => const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('正在保存...'),
-          ],
-        ),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text('正在保存...'),
+        ],
+      ),
       VoiceSaved() => Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.check_circle, size: 48, color: Colors.green.shade600),
-            const SizedBox(height: 16),
-            const Text('想法已保存', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: () =>
-                  ref.read(voiceNotifierProvider.notifier).reset(),
-              icon: const Icon(Icons.mic),
-              label: const Text('继续录音'),
-            ),
-          ],
-        ),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.check_circle, size: 48, color: Colors.green.shade600),
+          const SizedBox(height: 16),
+          const Text('想法已保存', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: () => ref.read(voiceNotifierProvider.notifier).reset(),
+            icon: const Icon(Icons.mic),
+            label: const Text('继续录音'),
+          ),
+        ],
+      ),
     };
   }
 
@@ -172,8 +182,7 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('转写结果',
-                      style: Theme.of(context).textTheme.labelLarge),
+                  Text('转写结果', style: Theme.of(context).textTheme.labelLarge),
                   const SizedBox(height: 8),
                   Text(text, style: Theme.of(context).textTheme.bodyLarge),
                 ],
@@ -192,8 +201,7 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('标签',
-                          style: Theme.of(context).textTheme.labelLarge),
+                      Text('标签', style: Theme.of(context).textTheme.labelLarge),
                       const SizedBox(height: 8),
                       Wrap(
                         spacing: 8,
@@ -201,8 +209,10 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
                         children: agentResponse.tags.map((tag) {
                           return Chip(
                             label: Text(tag),
-                            backgroundColor: _feasibilityColor(context, feasibility)
-                                .withValues(alpha: 0.15),
+                            backgroundColor: _feasibilityColor(
+                              context,
+                              feasibility,
+                            ).withValues(alpha: 0.15),
                           );
                         }).toList(),
                       ),
@@ -223,12 +233,10 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
                       const SizedBox(width: 12),
                       Text(
                         _feasibilityLabel(feasibility),
-                        style:
-                            Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  color: _feasibilityColor(
-                                      context, feasibility),
-                                ),
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: _feasibilityColor(context, feasibility),
+                        ),
                       ),
                     ],
                   ),
@@ -245,8 +253,10 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('建议行动',
-                          style: Theme.of(context).textTheme.labelLarge),
+                      Text(
+                        '建议行动',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
                       const SizedBox(height: 8),
                       ...agentResponse.suggestions.asMap().entries.map((e) {
                         return Padding(
@@ -254,17 +264,16 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('${e.key + 1}. ',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodyMedium
-                                      ?.copyWith(
-                                          fontWeight: FontWeight.bold)),
+                              Text(
+                                '${e.key + 1}. ',
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(fontWeight: FontWeight.bold),
+                              ),
                               Expanded(
-                                child: Text(e.value,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium),
+                                child: Text(
+                                  e.value,
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ),
                               ),
                             ],
                           ),
@@ -306,8 +315,9 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
               ),
               const SizedBox(width: 16),
               FilledButton.icon(
-                onPressed: () =>
-                    ref.read(voiceNotifierProvider.notifier).saveIdea(_selectedProjectId ?? 1),
+                onPressed: () => ref
+                    .read(voiceNotifierProvider.notifier)
+                    .saveIdea(_selectedProjectId ?? 1),
                 icon: const Icon(Icons.check),
                 label: const Text('确认保存'),
               ),

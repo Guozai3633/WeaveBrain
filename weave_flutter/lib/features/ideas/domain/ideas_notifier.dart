@@ -48,7 +48,11 @@ class IdeasNotifier extends Notifier<IdeasState> {
     return const IdeasInitial();
   }
 
-  Future<void> loadIdeas(int projectId, {String? search, List<String>? tags}) async {
+  Future<void> loadIdeas(
+    int projectId, {
+    String? search,
+    List<String>? tags,
+  }) async {
     _projectId = projectId;
     _currentPage = 1;
     _searchQuery = search;
@@ -123,5 +127,6 @@ class IdeasNotifier extends Notifier<IdeasState> {
   }
 }
 
-final ideasNotifierProvider =
-    NotifierProvider<IdeasNotifier, IdeasState>(() => IdeasNotifier());
+final ideasNotifierProvider = NotifierProvider<IdeasNotifier, IdeasState>(
+  () => IdeasNotifier(),
+);

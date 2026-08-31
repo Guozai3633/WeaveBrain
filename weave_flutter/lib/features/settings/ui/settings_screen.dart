@@ -14,8 +14,14 @@ final userApiProvider = Provider<UserApi>((ref) {
 
 final sttConfigProvider = FutureProvider<Map<String, dynamic>>((ref) async {
   final client = ref.watch(apiClientProvider);
-  final resp = await client.get('/config/stt');
-  return resp.data as Map<String, dynamic>;
+  try {
+    final resp = await client.get('/config/stt');
+    final data = resp.data;
+    if (data is Map<String, dynamic>) return data;
+    return {'provider': 'unknown'};
+  } catch (_) {
+    return {'provider': 'unavailable'};
+  }
 });
 
 class SettingsScreen extends ConsumerWidget {
@@ -42,31 +48,31 @@ class SettingsScreen extends ConsumerWidget {
           subtitle: sttAsync.when(
             data: (data) => Text(data['provider'] as String? ?? 'unknown'),
             loading: () => const Text('加载中...'),
-            error: (_, __) => const Text('获取失败'),
+            error: (_, _) => const Text('获取失败'),
           ),
         ),
         const Divider(),
 
         // --- API Config (placeholder) ---
         ListTile(
-          leading: const Icon(Icons.key_outlined),
-          title: const Text('API 配置'),
-          subtitle: const Text('管理第三方 API Key'),
+          leading: const Icon(Icons.integration_instructions_outlined),
+          title: const Text('MCP 集成'),
+          subtitle: const Text('管理 Notion、Email 等工具集成'),
           trailing: const Icon(Icons.chevron_right),
           onTap: () {
-            showDialog(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                title: const Text('API 配置'),
-                content: const Text('此功能即将支持，敬请期待！'),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('好的'),
-                  ),
-                ],
-              ),
-            );
+            context.push('/settings/mcp');
+          },
+        ),
+        const Divider(),
+
+        // --- AI Settings ---
+        ListTile(
+          leading: const Icon(Icons.auto_awesome_outlined),
+          title: const Text('AI 与自动化'),
+          subtitle: const Text('AI 记忆整理、语音转写与云端处理开关'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () {
+            context.push('/settings/ai');
           },
         ),
         const Divider(),
@@ -91,9 +97,7 @@ class SettingsScreen extends ConsumerWidget {
               context: context,
               applicationName: '织脑 WeaveBrain',
               applicationVersion: '1.0.0',
-              children: const [
-                Text('以语音为入口、Agent为引擎的个人思维外脑'),
-              ],
+              children: const [Text('以语音为入口、Agent为引擎的个人思维外脑')],
             );
           },
         ),
@@ -101,7 +105,10 @@ class SettingsScreen extends ConsumerWidget {
 
         // --- Logout ---
         ListTile(
-          leading: Icon(Icons.logout, color: Theme.of(context).colorScheme.error),
+          leading: Icon(
+            Icons.logout,
+            color: Theme.of(context).colorScheme.error,
+          ),
           title: Text(
             '退出登录',
             style: TextStyle(color: Theme.of(context).colorScheme.error),
@@ -190,13 +197,16 @@ class SettingsScreen extends ConsumerWidget {
 
     try {
       final userApi = ref.read(userApiProvider);
-      final updated = await userApi.updateProfile(user.id, displayName: newName);
+      final updated = await userApi.updateProfile(
+        user.id,
+        displayName: newName,
+      );
       await ref.read(authNotifierProvider.notifier).updateUser(updated);
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存失败: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('保存失败: $e')));
       }
     }
   }

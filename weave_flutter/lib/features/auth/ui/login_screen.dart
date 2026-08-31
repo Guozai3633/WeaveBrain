@@ -30,7 +30,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _error = null;
     });
     try {
-      await ref.read(authNotifierProvider.notifier).login(
+      await ref
+          .read(authNotifierProvider.notifier)
+          .login(
             _providerController.text.trim(),
             _providerIdController.text.trim(),
           );
@@ -108,6 +110,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             TextButton(
               onPressed: () => context.push('/register'),
               child: const Text('没有账号？注册'),
+            ),
+            TextButton(
+              onPressed: () => context.go('/'),
+              child: const Text('暂不登录，先在本机记录'),
             ),
           ],
         ),
