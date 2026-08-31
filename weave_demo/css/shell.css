@@ -1,0 +1,192 @@
+/* ============================================================
+   织脑原型 — 舞台壳：设备切换器、手机外框、Web 面板、切换逻辑
+   ============================================================ */
+
+/* ---------- 设备切换器 ---------- */
+.device-switcher {
+  position: sticky; top:0; z-index:900;
+  background: rgba(15,23,42,.92);
+  backdrop-filter: blur(12px);
+  border-bottom:1px solid rgba(255,255,255,.08);
+  padding:12px 24px;
+}
+.ds-inner {
+  max-width:1200px; margin:0 auto;
+  display:flex; align-items:center; gap:20px; flex-wrap:wrap;
+}
+.ds-brand { display:flex; align-items:center; gap:10px; color:#E2E8F0; }
+.ds-logo {
+  width:34px; height:34px; border-radius:10px;
+  background:linear-gradient(135deg, var(--primary), #818CF8);
+  display:flex; align-items:center; justify-content:center;
+  color:#fff;
+}
+.ds-logo .icon { width:20px; height:20px; }
+.ds-title { font-size:16px; font-weight:700; letter-spacing:.5px; }
+.ds-title em { font-style:normal; font-weight:500; color:#94A3B8; font-size:13px; margin-left:4px; }
+.ds-sub { font-size:12px; color:#94A3B8; }
+.ds-controls { display:flex; gap:8px; margin-left:auto; }
+.ds-btn {
+  display:inline-flex; align-items:center; gap:7px;
+  padding:8px 16px;
+  border-radius:var(--r-full);
+  font-size:13.5px; font-weight:600;
+  color:#94A3B8;
+  border:1px solid rgba(255,255,255,.12);
+  transition: all var(--dur) var(--ease);
+}
+.ds-btn .icon { width:16px; height:16px; }
+.ds-btn:hover { color:#E2E8F0; border-color:rgba(255,255,255,.3); }
+.ds-btn.active {
+  background:var(--primary); color:#fff; border-color:var(--primary);
+}
+.ds-hint { font-size:12px; color:#64748B; }
+
+/* ---------- 舞台 ---------- */
+.stage {
+  min-height:calc(100vh - 62px);
+  display:flex; align-items:flex-start; justify-content:center;
+  gap:48px;
+  padding:40px 32px 80px;
+}
+
+/* ---------- 手机外框 ---------- */
+.phone-frame {
+  display:none;
+  flex-direction:column; align-items:center;
+}
+.phone-frame[data-active="true"] { display:flex; }
+
+.phone-body {
+  width:var(--phone-w);
+  height:var(--phone-h);
+  border-radius:48px;
+  background:#1E293B;
+  border:8px solid #0B1220;
+  box-shadow:0 24px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.06);
+  position:relative;
+  overflow:hidden;
+  display:flex; flex-direction:column;
+}
+
+.phone-notch {
+  position:absolute; top:10px; left:50%; transform:translateX(-50%);
+  width:120px; height:28px;
+  background:#0B1220;
+  border-radius:0 0 18px 18px;
+  z-index:20;
+}
+
+.phone-statusbar {
+  height:44px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 26px;
+  font-size:12.5px; font-weight:600;
+  color:var(--text-hi);
+  background:var(--bg);
+  z-index:10;
+}
+.phone-statusbar .sb-icons { display:flex; gap:5px; align-items:center; }
+.phone-statusbar .sb-icons .icon { width:15px; height:15px; }
+
+.phone-screen {
+  flex:1;
+  background:var(--bg);
+  overflow:hidden;
+  position:relative;
+  display:flex; flex-direction:column;
+  min-height:0;
+}
+
+.phone-homebar {
+  height:34px; flex-shrink:0;
+  background:var(--bg);
+  display:flex; align-items:center; justify-content:center;
+}
+.phone-homebar::after {
+  content:"";
+  width:120px; height:4px; border-radius:2px;
+  background:var(--outline-strong);
+}
+
+.phone-label {
+  margin-top:14px;
+  font-size:12.5px; color:#64748B;
+}
+
+/* ---------- Web 面板 ---------- */
+.web-panel {
+  display:none;
+  flex-direction:column;
+  width:100%;
+  max-width:1080px;
+}
+.web-panel[data-active="true"] { display:flex; }
+
+.web-screen {
+  background:#EEF0F4;
+  border-radius:16px;
+  border:1px solid rgba(255,255,255,.1);
+  box-shadow:0 24px 60px rgba(0,0,0,.4);
+  height:720px;
+  overflow:hidden;
+  display:flex; flex-direction:column;
+  position:relative;
+}
+
+.web-label {
+  margin-top:14px;
+  font-size:12.5px; color:#64748B;
+  text-align:center;
+}
+
+/* ---------- 全局弹窗 ---------- */
+.modal-root {
+  position:fixed; inset:0; z-index:950;
+  pointer-events:none;
+}
+.modal-root > * { pointer-events:auto; }
+.modal-mask {
+  position:absolute; inset:0;
+  background:rgba(15,23,42,.5);
+  backdrop-filter:blur(3px);
+  display:flex; align-items:flex-end; justify-content:center;
+  animation:fadeIn var(--dur) var(--ease);
+}
+.modal-mask.modal-center { align-items:center; padding:24px; }
+@keyframes fadeIn { from{opacity:0} to{opacity:1} }
+
+/* 底部弹层（手机端习惯） */
+.sheet {
+  width:min(100%, 420px);
+  background:var(--surface);
+  border-radius:20px 20px 0 0;
+  padding:16px 20px calc(20px + env(safe-area-inset-bottom));
+  box-shadow:0 -12px 40px rgba(0,0,0,.18);
+  animation:sheetUp var(--dur-slow) var(--ease);
+  max-height:88vh;
+  overflow-y:auto;
+}
+@keyframes sheetUp { from{transform:translateY(40px); opacity:.6} to{transform:translateY(0); opacity:1} }
+.sheet-grabber {
+  width:38px; height:4px; border-radius:2px;
+  background:var(--outline-strong);
+  margin:0 auto 14px;
+}
+
+/* 居中弹窗（Web/确认） */
+.dialog {
+  width:min(92vw, 420px);
+  background:var(--surface);
+  border-radius:var(--r-xl);
+  padding:22px;
+  box-shadow:var(--shadow-3);
+  animation:dialogIn var(--dur-slow) var(--ease);
+}
+@keyframes dialogIn { from{transform:translateY(12px) scale(.97); opacity:0} to{transform:translateY(0) scale(1); opacity:1} }
+.dialog-title { font-size:17px; font-weight:700; margin-bottom:6px; }
+.dialog-sub { font-size:13px; color:var(--text-mid); margin-bottom:16px; line-height:1.6; }
+.dialog-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:18px; }
+
+/* 手机端用的小号居中确认 */
+.dialog-sm { width:min(84vw, 320px); }

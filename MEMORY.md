@@ -829,3 +829,412 @@
 
 ### 待决策
 - 无
+
+---
+
+## Sprint 12: R4 后端 — 可靠语音捕捉与 STT（AudioAsset + 分块上传 + 全文件 STT）
+**状态**: ✅ 已完成
+
+### 已完成
+
+#### Part A: 数据模型（迁移 000007）
+- [x] 创建数据库迁移 (000007_create_audio_capture.sql)
+  - `audio_assets`: user_id+id 复合主键；capture_id 外键级联到 captures(user_id,id)；size_bytes>0、upload_state∈(initiated,uploading,complete,failed) CHECK
+  - `transcript_revisions`: 不可变修订版本，revision=(max+1) 原子递增，source∈(stt,user) CHECK，(user_id,capture_id,revision) 唯一
+- [x] 契约测试：迁移不 ALTER captures；Down 顺序正确（先 transcript 后 audio）
+- [x] 实体: AudioAsset, TranscriptRevision, CaptureAudioAggregate (internal/entity/capture.go)
+
+#### Part B: 仓储接口
+- [x] AudioAssetRepository: Create/GetByID/GetByCapture/UpdateState/SetUploadedChunks/GetTranscriptRevisionCount
+- [x] TranscriptRepository: AppendRevision/GetLatest/ListByCapture
+- [x] 接入 DBStore (store.go NewFromPool + BeginTx)
+
+#### Part C: AudioFileStore（分块暂存 + 最终文件）
+- [x] AudioFileStore 接口: WriteChunk/Finalize/OpenFinal/RemoveStaging/ListStagedChunks
+- [x] LocalAudioFileStore: staging/{assetID}/part-N 分块落盘（重发幂等）；final/ 拼接
+- [x] **storage_path 服务端派生**：DB 存逻辑路径 `audio/{userID}/{assetID}.{ext}`，文件存储映射到物理基目录
+- [x] 路径穿越防护（physicalPath 拒绝 `../` 逃逸）+ OpenFinal 拒绝目录（避免 Windows 句柄泄漏）
+
+#### Part D: AudioService
+- [x] Initiate（幂等）：校验 capture 存在 + kind=audio + mime/size/sha256/total_chunks
+- [x] UploadChunk：每块 SHA-256 校验、index 范围、≤5 MiB、重试幂等
+- [x] Complete：块连续齐全 + size 一致 + 全文件 SHA-256，失败清理 staging
+- [x] TranscribeCapture：RecognizeFile 全文件 STT；未上传 412；stt_enabled=false 零调用；STT 失败保留原音频
+- [x] CorrectTranscript（用户修正 → source=user, revision+1）
+- [x] GetByCapture/GetByID/GetLatestTranscript（用户隔离 + 错误映射）
+- [x] CaptureService 支持 kind=audio（空文本 → OriginalText nil, 标题「语音记录」）；拒绝 unsupported kind
+
+#### Part E: STT RecognizeFile
+- [x] STTProvider 接口扩展 RecognizeFile(ctx, audioPath)
+- [x] mock provider: 脚本结果 / 缺文件 / 空文件 / FAIL 模拟失败 / 无脚本报错
+- [x] funasr provider: RecognizeFile 实现
+
+#### Part F: API 端点（/api/v3/）
+- [x] POST /audio-assets（initiate，201/400）
+- [x] GET /audio-assets/:id、GET /audio-assets/by-capture/:captureId
+- [x] PUT /audio-assets/:id/chunks/:index（raw body + X-Chunk-SHA256，204/400）
+- [x] POST /audio-assets/:id/complete（200/412）
+- [x] POST /captures/:captureId/transcribe（201/400/404/412）
+- [x] PATCH /captures/:captureId/transcript（用户修正）
+- [x] GET /captures/:captureId/transcript
+- [x] 新增 V3 错误码 PRECONDITION_FAILED（412）
+
+#### Part G: 接线
+- [x] server.go 注册 AudioAssetHandler（受保护 v3 分组）
+- [x] service.go Services.Audio 字段
+- [x] main.go: AUDIO_STORE_DIR 环境变量 + NewLocalAudioFileStore + NewAudioService
+
+### 技术决策
+- 完整音频作为 STT 输入（RecognizeFile），R4 禁止用 WebSocket 字幕替代完整音频资产
+- 分块幂等：按 index 落盘 part-N，重发覆盖；重放不重复计数
+- 完成时校验：块连续 + size + 全文件 SHA-256，任一失败 400 + 清理 staging
+- STT 永删原音频：TranscribeCapture 失败只返回错误，原资产保持 complete
+- 转写版本链：STT→revision=1 (stt)，用户修正→revision=2 (user)，全部不可变可追溯
+
+### 修复的问题
+1. **storage_path 不一致（真实缺陷）**：Complete 与 TranscribeCapture 路径不匹配 → 统一逻辑路径 + physicalPath 解析
+2. GetLatestTranscript 错误未映射 → 统一 404 语义
+3. 路径穿越防护 + OpenFinal 拒绝目录
+4. ListStagedChunks 未导出补齐
+
+### 验证
+- [x] `go build ./...` 通过
+- [x] `go vet ./...` 通过
+- [x] `go test ./...` 通过（78 个含边界/对抗测试）
+  - audio_service_test.go（~35）、audio_store_test.go（~12）、audio_handler_test.go（~13）、stt/mock provider_test.go（6）、capture_service_test.go（kind=audio 正向 + unsupported 拒绝）
+
+### 报告
+- [x] docs/round-reports/R04_BACKEND_REPORT.md
+
+---
+
+## Sprint 13: R4 前端 — 录音落盘 + 分块续传 + 转写修正 UI
+**状态**: ✅ 已完成（真机/E2E 待验证）
+
+### 已完成
+
+#### Part A: 数据层
+- [x] ApiClient putBytes：io/web 原始二进制 chunk 上传（X-Chunk-SHA256 头）；crypto 依赖
+- [x] LocalCapture 扩展 kind + audio 元数据 + transcript 字段，toMap/fromMap/copyWith/toCreateRequest
+- [x] Sembast 本地存储：saveAudioAsset / updateAudioUploadedChunks / saveTranscript（分块进度 + 转写可重启续传/恢复）
+- [x] 条件导出：api_client_io/web、audio_chunk_source_io/web、audio_file_storage_io/web（Web 抛 UnsupportedError）
+
+#### Part B: 上传服务
+- [x] AudioRemoteGateway（AudioApi）：initiate / uploadChunk / complete / transcribe / correct / getLatest
+- [x] AudioUploadService：create → initiate → 按缺块上传（跳过已传）→ complete → transcribe；失败 AUDIO_METADATA_MISSING / AUDIO_FILE_UNREADABLE / AUDIO_UPLOAD_FAILED
+- [x] CaptureSyncService 集成：kind=audio + audioUploader 注入 → 完整链路；上传失败 markRetryable 继续（服务端幂等重放安全）
+
+#### Part C: 录音与 UI
+- [x] AudioRecorder 抽象 + AudioRecorderDevice（record 7.1.0，wav 44100 mono，dBFS→振幅归一化）
+- [x] AudioFileStorage 抽象 + DefaultAudioFileStorage（path_provider 私有目录，size + 全文件 SHA-256，删除）
+- [x] AudioCaptureController 状态机：idle/requestingMic/recording/stopping/saved/permissionDenied/micInUse/saveFailed/unsupported；计时 + 振幅 + 取消清理
+- [x] RecordingScreen：暗色全屏、状态文案、mm:ss 计时、48 柱波形、开始/停止/重试、取消二次确认（canPop 守卫）
+- [x] TranscriptEditScreen：加载本地+服务端最新转写、可编辑、guest 本地修正 / 登录 PATCH + 本地镜像
+- [x] app.dart 路由 /record + /captures/:captureId/transcript（guest 可访问）；CaptureScreen 麦克风入口（Web 降级 SnackBar）
+- [x] capture_providers.dart 接线：audioRecorderDeviceProvider / audioFileStorageProvider / audioRemoteGatewayProvider / audioUploadServiceProvider / audioCaptureControllerProvider
+
+### 技术决策
+- 音频 capture 复用 kind=audio LocalCapture 持久化（含分块进度 + 转写），重试续传可跨重启
+- 全文件落盘后一次上传（R4 不用流式 WebSocket 字幕替代完整音频资产）
+- 可注入抽象（AudioRecorder/AudioFileStorage/AudioUploader/AudioRemoteGateway）保证控制器/服务/UI 三层可测
+- Web：仅提示能力差异 + 回退文字速记，不持久化音频文件
+
+### 修复的问题
+1. **Riverpod Notifier 无 dispose** → ref.onDispose 注册 ticker/振幅清理
+2. **取消在根路由崩溃**（GoError: There is nothing to pop）→ context.canPop() 守卫
+3. **stop 后 cancel 误删已保存文件** → 成功保存后清空 _recordingPath
+4. **cancel 空闲时误 stop** → 仅在有活跃录音路径时 stop+delete
+5. 测试环境 sembast 直写挂起（fake-async zone）→ tester.runAsync 包裹真实事件循环写入
+6. 测试 pumpAndSettle 死锁（聚焦 TextField 光标闪烁永续帧）→ 改用离散 pump(Duration)
+
+### 验证
+- [x] `dart analyze lib test` 通过（0 error / 0 warning）
+- [x] `flutter test` 45 个全绿
+  - audio_upload_service_test（9）、capture_sync_service_test（11，含音频集成）
+  - audio_capture_controller_test（9：权限/占用/开始/保存/取消/异常）
+  - recording_screen_test（5 widget）、transcript_edit_screen_test（2 widget）
+  - capture_screen_test（3）、widget_test（6）
+
+### 报告
+- [x] docs/round-reports/R04_FRONTEND_REPORT.md
+
+### 待验证（真机/E2E）
+- [ ] 移动端断网录音 → 重启找回音频（真实设备验证）
+- [ ] 完整音频上传 + 后端 RecognizeFile 端到端（尾句不丢）
+- [ ] Web 端 SnackBar 能力提示 + 文字速记回退
+
+### 待决策
+- 无
+
+---
+
+## Sprint 14: R5 后端步骤②③ — UserAISettings 数据层 + ai-settings API
+**状态**: ✅ 已完成（数据层 + API）
+
+### 已完成
+- [x] 迁移 000008_create_user_ai_settings.sql：user_ai_settings（user_id PK FK users ON DELETE CASCADE；ai_memory_enabled / ai_completion_enabled / speech_to_text_enabled / cloud_text_allowed / cloud_audio_allowed 全部 BOOLEAN NOT NULL DEFAULT FALSE；revision BIGINT DEFAULT 0；created_at/updated_at）
+- [x] 实体 internal/entity/ai_settings.go：UserAISettings + DefaultUserAISettings（隐私优先全 false、revision 0）
+- [x] 仓储接口 UserAISettingsRepository：GetByUserID（无行返回 nil）/ Create（并发冲突→VERSION_CONFLICT）/ Update（CAS WHERE revision=$expected → RETURNING revision）
+- [x] pg 实现 ai_settings_repository.go：Create 插入 revision 1（首次写入自隐式 0 默认值）；Update revision+1；GetByUserID 按 user_id 作用域
+- [x] DBStore 接线：store.go NewFromPool + BeginTx 均注册 AISettings 仓储
+- [x] Service ai_settings_service.go：Get 无行时物化默认；Update 部分补丁 + expectedRevision CAS → ErrAISettingsConflict（VERSION_CONFLICT）
+- [x] service.go Services.AISettings 接线
+
+### 技术决策
+- revision 语义：无行默认态=0；任何写入（含首次 Create）后 revision=1，之后每次写 +1；多设备并发以 expectedRevision CAS 检测
+- 部分更新：UpdateAISettingsInput 用指针字段，未出现的字段保持原值
+- 创建竞态：Create ON CONFLICT DO NOTHING，rowsAffected=0 → ErrAISettingsVersionConflict
+
+### 验证
+- [x] `go build ./...` / `go vet ./...` 通过
+- [x] `go test ./...` 全绿（新增 17：仓储 6 + 服务 10 + 迁移契约 1）
+  - ai_settings_repository_test.go（6：无行/全列扫描/默认值 Create/Create 竞态/CAS miss/返回新 revision）
+  - ai_settings_service_test.go（10：物化默认/读取已存/新用户 Create/匹配 revision 递增/过期 revision 冲突/部分补丁保留/仓储冲突映射/缺 user_id/Get 缺 user_id/Update 冲突映射）
+  - user_ai_settings_migration_contract_test.go（1：Up/Down、默认 FALSE、PK、级联删除、索引先于表删除）
+
+### 步骤③：GET/PATCH /api/v3/users/me/ai-settings
+- [x] ai_settings_handler.go：Get（物化默认返回 200）+ Update（部分补丁，expected_revision 必填且非负，至少 1 个设置字段；成功 200 / 400 INVALID_ARGUMENT / 409 VERSION_CONFLICT）
+- [x] server.go protectedV3 分组接线（s.services.AISettings != nil）
+- [x] API_V3_CONTRACT.md §9（认证 / 读取 / 更新 / revision 语义 / 自动化证据）
+
+### 步骤③验证
+- [x] `go build ./...` / `go vet ./...` 通过
+- [x] `go test ./...` 全绿（步骤③新增 10：ai_settings_handler_test.go）
+
+### 下一步
+- R5 步骤④⑤：AI 记忆整理总开关（默认 false）+ AI 补全/独立转写/云端授权开关（字段已就位，待接行为）
+- R5 步骤⑥：Capture 策略快照 + PostgreSQL Outbox Worker
+
+---
+
+## Sprint 15: R5 后端步骤④⑤⑥⑦⑧ — 策略快照 + Outbox Worker + 关闭取消
+**状态**: ✅ 已完成（后端；前端第九步见 Sprint 16）
+
+### 已完成
+
+#### 迁移 000009（capture_outbox 生命周期改造）
+- [x] capture_outbox 增加 `policy_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb`、`last_error TEXT`、`updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`
+- [x] 数据迁移：pending→queued、processed→ready；替换状态约束为 `('queued','retry_wait','processing','ready','failed','cancelled')`
+- [x] 替换索引为 `idx_capture_outbox_due (status, next_run_at, id) WHERE status IN ('queued','retry_wait')`
+- [x] Down 完整可逆（恢复 pending/processed 状态 + 旧索引）
+
+#### 实体与策略快照
+- [x] PolicySnapshot（5 个 AI 授权布尔，DefaultPolicySnapshot 全 false，FromAISettings 无行→默认）
+- [x] CaptureOutbox 扩展：PolicySnapshot、LastError、UpdatedAt
+
+#### OutboxRepository（pg）
+- [x] ClaimDue：CTE + `FOR UPDATE SKIP LOCKED`，WHERE status IN ('queued','retry_wait') AND next_run_at<=now()，LIMIT $1，attempt_count+1 → processing，RETURNING 13 列（payload/policy 反序列化）
+- [x] MarkReady / MarkFailed / MarkRetryWait（next_run_at=now()+backoff，last_error=$3）
+- [x] CancelByUser（只取消 queued/retry_wait，返回受影响行数）
+- [x] CountQueued（queued+retry_wait 计数）
+- [x] ErrOutboxEventNotFound（MarkReady 0 行 → 判定）
+
+#### CaptureRepository.Create 策略快照落库
+- [x] Create(ctx, capture, card, policy)：outbox INSERT 增加 `policy_snapshot $18::jsonb`；payload 内嵌 privacy_mode
+
+#### CaptureService 快照解析
+- [x] AISettingsSnapshotSource 接口（Get(ctx,userID)），NewCaptureService(repo, settings)
+- [x] resolvePolicySnapshot：nil 源或读取失败 → 隐私优先全 false（绝不阻塞捕获创建）；正常 → FromAISettings
+
+#### EnrichmentPipeline + OutboxWorker
+- [x] EnrichmentPipeline 接口（Organize/Embed/Relate/Recap）+ R5 no-op 默认实现（R6/R8 替换）
+- [x] OutboxWorker：Run 轮询（PollInterval 默认 1s，ClaimBatch 20）；Start/Stop 幂等
+- [x] processDue → processOne：快照 AI 关闭或 privacy_mode=no_ai → 直接 MarkReady 零 pipeline；否则 GetByID 捕获（不存在 → MarkFailed 终态）→ 4 阶段 pipeline → MarkReady
+- [x] scheduleRetry：attempt>=MaxAttempts → MarkFailed；否则 MarkRetryWait + 指数退避（RetryBase×2^(n-1)，上限 RetryMax）
+
+#### AISettingsService 关闭取消
+- [x] 注入 OutboxRepository；Update 成功后若 AI 记忆整理 由开→关 → CancelByUser（尽力而为，失败仅日志）
+- [x] 开启不取消、无关开关变更不取消（均有测试）
+
+#### 接线
+- [x] store.go：Outbox 仓储（NewFromPool + BeginTx）
+- [x] service.go：AISettingsService 带 outbox；CaptureService 带 settings；构造 OutboxWorker（store 可用时）
+- [x] main.go：Start 于 <-stop 前，Stop 于优雅关闭
+
+### 技术决策
+- 事务性 Outbox：捕获创建与 outbox 事件同语句写入，快照随事件冻结 → 「再开启只影响新 Capture」
+- 隐私优先兜底：设置源故障绝不阻塞捕获创建（默认全 false，pipeline 零调用）
+- 关闭取消是优化而非正确性必需：worker 快照门控本身保证不再触发 AI；CancelByUser 尽力而为清理
+- organize-once：每个事件一次完整 pipeline（状态 processing 持锁），重试不重跑已成功阶段
+
+### 验证
+- [x] `go build ./...` / `go vet ./...` 通过
+- [x] `go test ./...` 全绿
+  - outbox_repository_test.go（7：ClaimDue 解码 + FOR UPDATE SKIP LOCKED / 空集合 / MarkReady / 未找到 / MarkFailed / MarkRetryWait 退避 / CancelByUser 作用域 / CountQueued）
+  - outbox_worker_test.go（8：AI 关→零 pipeline ready / no_ai 跳过 / AI 开→全 pipeline / 失败→退避重试 / 超限→终态 failed / 捕获缺失→立即 failed / 退避指数与封顶 / Start-Stop 幂等）
+  - outbox_processing_migration_contract_test.go（1：Up/Down 契约）
+  - capture_service_test.go（+3：快照落库 / 设置源失败→隐私兜底 / 无源→隐私兜底）
+  - ai_settings_service_test.go（+3：关闭→取消 queued / 开启→不取消 / 无关开关→不取消）
+  - 更新：capture_repository_test.go、capture_repository_integration_test.go、capture_service_test.go、audio_service_test.go、ai_settings_service_test.go（Create 签名 + NewCaptureService/NewAISettingsService 新签名）
+
+### 修复的问题
+1. **cancelQueuedIfDisabled 守卫反转**：`wasEnabled || nowEnabled` → `!wasEnabled || nowEnabled`（关闭场景 wasEnabled=true 本应触发取消，原逻辑跳过）
+2. **pgx.Rows 测试 mock Conn() 类型**：v5.10.0 中 `Rows.Conn()` 返回 `*pgx.Conn`（非 *pgconn.PgConn/Conn）
+
+### 报告
+- [x] docs/DEVELOPMENT_GOALS.md G3 步骤④⑤⑥⑦⑧ 已勾选 + 完成条件更新
+
+### 下一步
+- G4 / R6：记忆卡、记忆流与详情（fallback MemoryCard 完整字段、EnrichmentRevision + provenance + source_revision、记忆流倒序 + 筛选 + 全文搜索、详情按 ID 加载、修正/续写/置顶/归档/删除、主导航调整）
+
+---
+
+## Sprint 16: R5 步骤⑨ — Flutter AI 设置页 + 后端补整理端点
+**状态**: ✅ 已完成
+
+### 已完成
+
+#### 后端：历史补整理（Reorganize）
+- [x] OutboxRepository 增加 `CountPendingReorganize`（count ready+快照关闭）与 `ReorganizeByUser`（UPDATE → queued、盖当前快照、attempt=0、next_run=now，返回行数）
+- [x] AISettingsService：`ErrReorganizeAIMemoryDisabled` 哨兵 + `CountPendingReorganize`/`Reorganize`（AI 关 → 哨兵；outbox nil → 优雅降级 0）
+- [x] AISettingsHandler：GET 信封新增 `pending_reorganize`；POST `/users/me/ai-settings/reorganize` → `{reorganized, request_id}`；`ErrReorganizeAIMemoryDisabled` → 409 FEATURE_NOT_ENABLED
+- [x] 测试：outbox(+3)、service(+4)、handler(+4，更新 fake 增加 count/reorganize) 全绿
+
+#### 前端：/settings/ai 页
+- [x] `ai_settings_api.dart`：AISettings 模型（5 开关 + revision + copyWith/fromJson）+ AISettingsResult 信封 + AISettingsGateway 抽象 + AISettingsApi + v3 ApiClient provider
+- [x] `ai_settings_notifier.dart`：sealed Loading/Loaded/Error；load / setSwitch(携带 expected_revision) / reorganize(成功后 reload 刷新计数) / clearMessage；409 → 「设置已在其他设备修改，请刷新」
+- [x] `ai_settings_screen.dart`：总开关「AI 记忆整理」默认关 + 独立「语音转写」+ 3 子开关（总开关关时置灰保留原值）+ revision 行 + 总开关开且 pending>0 时「补整理未处理记忆 (N 条)」按钮
+- [x] 接线：settings_screen 加「AI 与自动化」入口 + app.dart `/settings/ai` 嵌套路由
+- [x] 测试：api(8) / notifier(7) / screen(5) + 全量 `flutter test` 65 绿 + `dart analyze lib test` 无问题
+
+### 技术决策
+- 补整理目标集 = `status='ready' AND policy_snapshot->>'ai_memory_enabled'='false'`：正是「AI 关闭期间创建 → worker 直接 MarkReady 未跑 pipeline」的记忆；不含 failed/cancelled（保持「关闭即取消」显式语义）
+- 补整理仅当 AI 记忆整理开启时允许；关闭 → 409 FEATURE_NOT_ENABLED
+- 开关映射：ai_memory_enabled→总开关；speech_to_text_enabled→独立转写（关闭整理仍可转写 → TranscriptRevision）；ai_completion_enabled/cloud_text_allowed/cloud_audio_allowed→3 子开关（总开关关时置灰保留原值）
+- 设置 revision 同源展示：手机与 Web 共用同一 GET /ai-settings 信封 → 满足「手机/Web 显示同一 revision」
+
+### 验证
+- [x] `go build ./...` / `go vet ./...` 通过；`go test ./...` 全绿
+- [x] `dart analyze lib test` 无问题；`flutter test` 65 绿
+- [x] docs/API_V3_CONTRACT.md §9.2 增加 pending_reorganize + 新增 §9.5 补整理端点
+- [x] docs/DEVELOPMENT_GOALS.md G3 第九步勾选 + 完成条件「历史补整理显式触发」「手机/Web 同 revision」标 [x]
+
+### 下一步
+- G4 / R6：记忆卡、记忆流与详情（fallback MemoryCard 完整字段、EnrichmentRevision + provenance + source_revision、记忆流倒序 + 筛选 + 全文搜索、详情按 ID 加载、修正/续写/置顶/归档/删除、主导航调整）
+
+---
+
+## Sprint 17: R5 全面测试 + 总结
+**状态**: ✅ 已完成
+
+### 已完成
+- [x] `go test ./...` 全绿（143 用例，0 失败）；`flutter test` 全绿（65 用例）；`dart analyze lib test` 0 error / 0 warning
+- [x] docs/round-reports/R05_REPORT.md（阶段结论 / 交付能力 / 设计要点 / 测试情况 / 修复问题 / 完成条件核对 / 下一步）
+- [x] docs/DEVELOPMENT_GOALS.md 顶层表 G3 → 「R5 完成（后端 143 + 前端 65 测试绿；真机/E2E 待验证）」
+- [x] G3 九步 + 全部完成条件已勾选
+
+### 下一步
+- G4 / R6：记忆卡、记忆流与详情（fallback MemoryCard 完整字段、EnrichmentRevision + provenance + source_revision、记忆流倒序 + 筛选 + 全文搜索、详情按 ID 加载、修正/续写/置顶/归档/删除、主导航调整）
+
+---
+
+## Sprint 18: R6 记忆卡、记忆流与详情（G4）
+**状态**: ✅ 已完成（真机 / E2E 待验证）
+
+### 已完成
+
+#### 后端：fallback 卡 + EnrichmentRevision + 记忆流 7 端点
+- [x] 迁移 000010：pg_trgm 扩展、memory_cards 补列（summary / tags JSONB / key_points JSONB / is_pinned / pinned_at）、memory_card_revisions 表（revision 升序、card_version、source CHECK fallback|ai|user、changes/provenance JSONB、UNIQUE(user_id,capture_id,revision)）、三列 GIN（original_text / title / transcript text）+ pinned 部分索引 + tags 索引
+- [x] fallback 原子落库：capture 创建单条 CTE 同时写 capture + memory_card（title 前 30 rune、summary 前 200 rune+…、tags=[]、key_points=[]、primary_type='uncategorized'）+ 初始 fallback revision（revision=1 / card_version=1 / source=fallback / source_revision=1）
+- [x] MemoryRepository：List（倒序 is_pinned DESC, created_at DESC, id DESC + keyset 游标 base64url(JSON{p,t,i}) + 三列 ILIKE 搜索 q 转义 `\ % _` + kind/primary_type/pinned/lifecycle 筛选）、ListRevisions 降序、AppendRevisionAndUpdateCard（correct 原子 CTE，MAX(revision)+1，并发撞 UNIQUE → ErrVersionConflict）、AppendNoteAndBump（续写不改字段）、SetPinned（pinned_at）、SetLifecycle（archived 幂等 / trashed→deleted_at）
+- [x] MemoryService：List 默认 limit 20 封顶 50 / 默认 active / 游标解码；GetDetail（capture 404 + audio/transcript 容忍 nil + revisions）；Correct（校验 title≤300、summary≤2000、tags≤20×100、key_points≤3×500、primary_type 白名单 + user revision + card.version+1）；AppendNote（≤10000 rune）；SetPinned / Archive（幂等）/ Delete（trashed）
+- [x] MemoryHandler 7 端点：GET /memories（列表+搜索+游标）、GET /memories/:captureId（详情）、PATCH（修正）、POST notes（续写）、POST pin、POST archive、DELETE（软删）；错误映射 400/401/404/409（VERSION_CONFLICT）；每个响应含 request_id
+- [x] server.go v3 鉴权组注册；AI pipeline 保持 no-op（R8 真实 AI 写 ai revision，失败不覆盖原文）
+
+#### 前端：记忆流与详情页 + 主导航四标签
+- [x] memory_api.dart：MemoryCardModel（summary/tags/keyPoints/isPinned/version）、MemoryListEntry/Result、MemoryRevision、MemoryDetail（audio/transcript 可空）+ MemoryGateway 抽象 + MemoryApi（v3 ApiClient）+ provider（测试 override 点）
+- [x] memory_notifier.dart：MemoryListNotifier（load 重置游标 / loadMore / search 防抖 / setFilter / refresh + 动作后本地更新或 reload + message）+ MemoryDetailNotifier（load(captureId) 从路径参数 / correct / addNote / setPinned / archive / delete；409/404 提示）
+- [x] memory_list_screen.dart：搜索框（300ms 防抖）+ 筛选 chips + RefreshIndicator + loadMore + 空/错态；卡片每卡恰一个主按钮（按 primary_type 映射）
+- [x] memory_detail_screen.dart：按 captureId 加载（刷新按 ID 恢复）；头部（类型/状态/置顶）、原始记忆（原文/音频/转写入口）、整理字段、继续思考续写、修订历史、修正弹窗 / 归档 / 删除确认；全部测试 Key 化
+- [x] 导航：StatefulShellRoute 4 分支（记忆/捕捉/回响/我的）；回响 = EchoScreen 占位「规划中」；/memories/:captureId 顶层隐藏路由按 ID 加载（pathParameters 非 extra）；guest /→/capture；/ideas /timeline /projects 降级为隐藏路由
+- [x] app_scaffold.dart 4 目的地（library_books / mic / auto_awesome / person）
+
+### 技术决策
+- 修订而非覆写：用户编辑只追加 EnrichmentRevision + card.version+1，captures.original_text 全程只读；source_revision = captures.version 溯源锚点
+- 并发安全：修订号在单条 CTE 内 MAX(revision)+1，撞 UNIQUE → 409 VERSION_CONFLICT；R6 不做卡片乐观锁
+- keyset 游标：排序键 (is_pinned, created_at, id) 稳定，翻页携带相同筛选；base64url 编码
+- pg_trgm GIN：CJK 子串 ILIKE 走索引；trigram ≥3 字符限制使 1–2 字符中文可能顺序扫描（MVP 接受，记入 research note）
+- 软删语义：delete → trashed + deleted_at（列表/详情隐藏）；audio 资产暂不级联
+- Flutter 三层可测抽象：MemoryGateway + Notifier（sealed state）+ 页面；Riverpod overrideWithValue 注入 fake
+
+### 验证
+- [x] `go build ./...` / `go vet ./...` 通过
+- [x] `go test ./...` **227** 用例全绿（R5 143 → +84）
+  - memory_repository_test.go（List 所有权/排序/搜索/筛选/游标/ListRevisions/AppendRevision 原子 CTE/SetPinned/SetLifecycle）
+  - memory_service_test.go（Correct→user revision + version 递增 + provenance / 校验失败 / AppendNote 不改字段 / trashed→404 / SetPinned 切换 / Archive 幂等 / Delete→trashed / GetDetail nil 容忍 / fallback 字段派生）
+  - memory_handler_test.go（list 200+next_cursor / 筛选透传 / detail 200+revisions / 404 / PATCH 200+400 / notes / pin / archive / delete / 401 / request_id）
+  - migration_contract_test.go（迁移 000010 结构 + pg_trgm + GIN + source CHECK + Down 顺序）
+  - 更新：capture_repository/service/handler + outbox_worker（Create 签名带初始 revision、fallback 派生、AI 关创建后 fallback revision 存在）
+- [x] `dart analyze lib test` 0 error / 0 warning
+- [x] `flutter test` **113** 用例全绿（R5 65 → +48）
+  - memory_api_test.dart（20）/ memory_notifier_test.dart（14）/ memory_list_screen_test.dart（5）/ memory_detail_screen_test.dart（8）/ widget_test.dart（2：guest 重定向 + 4 目的地 + 详情按 ID 加载）
+
+### 修复的问题
+1. **详情页「取消归档」无后端对应**：R6 仅幂等 archive（无取消归档端点），改为固定「归档」按钮 + 契约记录限制
+2. **Flutter widget 测试 warnIfMissed**：详情页动作按钮折叠线下方，tap 前补 ensureVisible
+3. **测试文案冲突**：摘要默认值 '摘要' 与「整理字段」标签冲突 → 改 '这是一段摘要'
+4. **analyzer 3 处告警**：两个测试未用 import + _FakeGateway 未用构造参数，清理后 0/0
+
+### 报告
+- [x] docs/round-reports/R06_REPORT.md（阶段结论 / 交付能力 / 设计要点 / 测试情况 / 修复问题 / 完成条件核对 / 已知限制 / 下一步）
+- [x] docs/API_V3_CONTRACT.md §10 记忆流接口（7 端点 + 数据模型 + 搜索/游标/生命周期/错误契约 + 自动化证据）
+- [x] docs/DEVELOPMENT_GOALS.md G4 八步 + 7 完成条件全部勾选
+- [x] docs/topic_notes/r6_memory_stream_search.md（pg_trgm 选型决策记录）
+
+### 已知限制（记入 R06 报告）
+- 无取消归档 / 回收站还原（G13 回收站级联）；存量捕获无 fallback revision（可选一次性回填）；并发编辑 409 客户端重试；1–2 字符中文搜索可能不走 trigram 索引；AI 组织留 G6/R8
+
+### 下一步
+- G5 / R7：验收 B —— 核心捕捉与 AI 控制（原始捕捉丢失为 0、AI 关闭时后台整理调用为 0、95% 任务最终 ready 或明确失败、原音频/原文/修正版可追溯、体验样本、严重权限与数据串用户问题为 0、R7 验收报告）
+
+---
+
+## Sprint 19: R7 验收 B — 核心捕捉与 AI 控制（G5）
+**状态**: ✅ 已完成（自动化证据全绿；G5 标准 5「20 样本人工验收」待真机回填）
+
+### 已完成
+
+#### 后端修复：v1 跨用户漏洞 + timeline bug + outbox 孤儿回收
+- [x] VULN-1 `GET /api/v1/ideas` 跨用户读 → `GetByProjectID` / `Search` 增加 user_id，列表限定当前用户项目（他人项目 → 空列表）
+- [x] VULN-2 `POST /api/v1/ideas` 跨用户写 → IdeaService 项目归属哨兵 `ErrProjectForbidden`，handler 403
+- [x] VULN-3 `GET /api/v1/reminders` 跨用户读全部待办 → 新增 `GetPendingByUser`（保留 cron 系统级 `GetPending`），HTTP 用它
+- [x] VULN-4 `GET /api/v1/agent/workflow/:id` 跨用户读 → 取回后比对 `workflow_runs.user_id` → 403
+- [x] VULN-5 `GET /api/v1/users/:id` 他人资料可读 → 仅本人，他人一律 404
+- [x] BUG-1 `GET /api/v1/users/me/timeline` 恒 401 → `getCurrentUserID` 修复类型断言
+- [x] 孤儿回收：`ClaimDue(ctx, limit, lease)` 重领 stale `processing`（`updated_at <= now()-lease`）+ `FOR UPDATE SKIP LOCKED` + `OutboxWorkerConfig.ClaimLease`（默认 5min）+ 迁移 000011 stale-processing 部分索引
+
+#### 真实 PG 集成运行新发现的真实缺陷修复
+- [x] 迁移 000009 遗留 bug：`capture_outbox.status` DEFAULT 仍为 `'pending'`，与 CHECK（queued...cancelled）冲突，生产新建捕捉必崩 → 迁移 000012 `SET DEFAULT 'queued'` + 契约测试
+- [x] 音频 `Initiate` 未持久化 `sha256` → `Complete` 空指针 → INSERT 补 sha256 列
+- [x] `DBStore` 从未接线 Timeline 仓储 → timeline 端点恒 500 → store.go `NewFromPool`/`BeginTx` 补 `Timeline` 初始化
+- [x] `MemoryRepository.SetLifecycle` `$3` 类型推断歧义（SQLSTATE 42P08）→ `$3::text` 显式转型 + 单测断言同步
+- [x] 集成测试共享库污染：孤儿回收 / soak 测试种数据前 `DELETE FROM capture_outbox`
+
+#### 测试设施 + 集成测试
+- [x] Makefile：`TEST_DB_URL` + `db-create-test` / `migrate-test-up` / `test-integration` / `test-integration-fast`（独立 weavebrain_test 库）
+- [x] README（WeaveBrain/README.md）：Testing 节 + 目录 + 根目录 docker-compose 重复副本清理备注
+- [x] 单元/契约（无 env）**236** 全绿（R6 227 → +9）：idea_repo +2 / reminder_repo +1 / idea_service +3 / outbox_repo stale 回收 +1 / 迁移契约 000011 + 000012 +2 / SetLifecycle SQL 断言同步
+- [x] 真实 PG **242** 全绿：6 个环境门控集成测试实际运行 —— R7 新增 TestR7CrossUserSecurityAcceptance / TestOutboxOrphanRecoveryIntegration / TestR7BatchSoakIntegration（40/40 终态，ready=31+failed=6+cancelled=3，AI 关 pipeline 0 调用）/ TestR7TraceabilityChainIntegration（[stt,user] + [fallback,user] 修订链、音频 sha256 不变）+ 既有 R3/R4 集成回归
+
+#### 文档
+- [x] docs/round-reports/R07_REPORT.md（阶段结论 / 交付能力 / 设计要点 / 测试情况 / 修复问题 / G5 7 项核对 / 已知限制 / 下一步）
+- [x] docs/API_V1_SECURITY_CONTRACT.md（v1 行为变更契约：漏洞 → 状态码、404 vs 403、GetPendingByUser 偏离、残留暴露）
+- [x] docs/round-reports/R07_MANUAL_UX_SAMPLE.md（20 条口语短语人工验收清单，判定 ≥65% = 13/20，待真机执行）
+- [x] docs/DEVELOPMENT_GOALS.md G5：6 项自动化标准勾选；标准 5 待人工；顶层表 → 「R7 完成（后端 242 测试含真实 PG 集成全绿；20 样本人工验收待回填）」
+
+### 技术决策
+- GetPendingByUser 偏离：cron 需系统级 GetPending（遍历全用户投递），HTTP 用用户级方法；有据偏离记入契约
+- 孤儿重领租约锚点 = `updated_at`（worker 每次处理刷新），cutoff 预计算绑 `timestamptz`（规避 pgx Duration→interval codec）
+- 集成测试共享库隔离：随机 UUID 防主键撞车；全局操作（ClaimDue / 全表状态计数）前先清 `capture_outbox`
+- 真实 PG 是唯一能暴露「迁移默认值 vs CHECK」「仓储漏列」「仓储接线遗漏」「类型推断歧义」的手段 —— 验收「不跑集成测试不合并」成立
+
+### 验证
+- [x] `go build ./...` / `go vet ./...` 通过
+- [x] `go test ./...`（无 env）236 全绿；`WEAVEBRAIN_TEST_DATABASE_URL=... go test ./...` 242 全绿（goose 迁移 000001—000012 + 6 集成测试）
+- [x] 集成测试设施在真实 PostgreSQL 上跑通（docker-compose postgres + weavebrain_test 库）
+
+### 已知限制
+- G5 标准 5（20 样本）待真机人工执行回填；残留暴露 `SearchByTags`/`SearchBySimilarity` 仅 project 作用域（记后续）；`captures.version` 恒 1 → `source_revision` 恒 1（语义缺口非泄漏，R7 不修）；迁移 000011/000012 需对 dev 库 `goose up`
+
+### 下一步
+- G6 / R8：AI 补全（CompletionProposal / FieldProposal、completion:preview / apply、evidence_spans、safe_auto/suggest_only/forbidden、逐字段采用 + 版本与撤销、详情页补全入口、旧提案过期）

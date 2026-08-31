@@ -1,0 +1,80 @@
+/* ============================================================
+   织脑 WeaveBrain 原型 — 设计令牌（双端唯一来源）
+   ============================================================ */
+:root {
+  /* ---- 品牌色 ---- */
+  --primary: #4F46E5;            /* 靛蓝 600，主操作色 */
+  --primary-hover: #4338CA;
+  --primary-container: #EEF2FF;  /* 浅紫底，AI 派生区 */
+  --on-primary: #FFFFFF;
+  --link-blue: #2563EB;
+
+  /* ---- 纸感背景 ---- */
+  --bg: #FAFAF9;                 /* 暖白 stone-50 */
+  --surface: #FFFFFF;
+  --surface-2: #F5F5F4;
+  --outline: #E7E5E4;
+  --outline-strong: #D6D3D1;
+
+  /* ---- 文字 ---- */
+  --text-hi: #1C1917;
+  --text-mid: #57534E;
+  --text-low: #A8A29E;
+
+  /* ---- 录音强调 ---- */
+  --record: #F59E0B;             /* 琥珀 500 */
+  --record-deep: #D97706;
+  --record-ring: rgba(245,158,11,.28);
+
+  /* ---- 语义色 ---- */
+  --ok: #10B981;
+  --warn: #F59E0B;
+  --err: #EF4444;
+  --info: #3B82F6;
+
+  /* ---- 记忆卡类型色 ---- */
+  --type-idea:  #7C3AED;         /* 闪念 紫 */
+  --type-q:     #0D9488;         /* 问题 青 */
+  --type-action:#E11D48;         /* 行动 玫红 */
+  --type-refl:  #D97706;         /* 反思 琥珀棕 */
+  --type-ref:   #2563EB;         /* 资料 蓝 */
+
+  /* ---- 处理状态 ---- */
+  --st-processing:#F59E0B;
+  --st-ready:#10B981;
+  --st-needs:#6366F1;
+  --st-failed:#EF4444;
+
+  /* ---- 同步状态色（对齐 Flutter 既有色表） ---- */
+  --sync-saved:#64748B;
+  --sync-pending:#F59E0B;
+  --sync-syncing:#3B82F6;
+  --sync-synced:#22C55E;
+  --sync-error:#EA580C;
+  --sync-conflict:#EF4444;
+
+  /* ---- 几何 ---- */
+  --r-sm:8px;
+  --r-md:12px;
+  --r-lg:16px;
+  --r-xl:20px;
+  --r-full:999px;
+
+  --shadow-1: 0 1px 2px rgba(28,25,23,.06);
+  --shadow-2: 0 4px 16px rgba(28,25,23,.08);
+  --shadow-3: 0 12px 32px rgba(28,25,23,.14);
+
+  /* ---- 动效 ---- */
+  --dur: 200ms;
+  --dur-slow: 400ms;
+  --ease: cubic-bezier(.2,0,0,1);
+
+  /* ---- 字体 ---- */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  --mono: "SF Mono", ui-monospace, "JetBrains Mono", Consolas, monospace;
+
+  /* ---- 手机外框 ---- */
+  --phone-w: 390px;
+  --phone-h: 844px;
+}

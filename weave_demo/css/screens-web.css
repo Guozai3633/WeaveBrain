@@ -1,0 +1,70 @@
+/* ============================================================
+   织脑原型 — Web 端各屏幕布局
+   ============================================================ */
+
+/* ---------- Web 记忆流主从 ---------- */
+.web-filter-bar {
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:11px 16px;
+  background:#fff;
+  border-bottom:1px solid var(--outline);
+}
+.web-filter-bar select, .web-filter-bar .select {
+  padding:7px 12px;
+  border:1px solid var(--outline-strong);
+  border-radius:8px;
+  background:var(--surface);
+  font-size:13px; color:var(--text-hi);
+}
+.web-filter-bar .count-info { font-size:12.5px; color:var(--text-low); margin-left:auto; }
+
+.web-card {
+  background:#fff;
+  border:1px solid var(--outline);
+  border-radius:var(--r-lg);
+  padding:13px 14px 9px;
+  margin-bottom:10px;
+  cursor:pointer;
+  transition:box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.web-card:hover { box-shadow:var(--shadow-2); border-color:var(--outline-strong); }
+.web-card.selected { border-color:var(--primary); box-shadow:0 0 0 2px rgba(79,70,229,.14); }
+
+/* Web 详情 */
+.web-detail-title-input {
+  width:100%;
+  font-size:23px; font-weight:750; color:var(--text-hi);
+  border:none; background:none;
+  line-height:1.35; resize:none;
+}
+.web-detail-meta { display:flex; align-items:center; gap:9px; flex-wrap:wrap; font-size:13px; color:var(--text-low); margin-top:9px; }
+
+/* Web 空状态（主从右侧无选中） */
+.web-detail-empty {
+  flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  color:var(--text-low);
+}
+.web-detail-empty .icon { width:52px; height:52px; opacity:.4; margin-bottom:12px; }
+
+/* ---------- Web 工作流/数据管理卡片 ---------- */
+.wf-card {
+  display:flex; align-items:center; gap:14px;
+  background:#fff; border:1px solid var(--outline);
+  border-radius:var(--r-lg);
+  padding:16px 18px; margin-bottom:12px;
+}
+.wf-card-main { flex:1; }
+.wf-card-title { font-size:15px; font-weight:700; }
+.wf-card-sub { font-size:12.5px; color:var(--text-low); margin-top:3px; }
+
+/* 存储占用 */
+.storage-row {
+  display:flex; align-items:center; gap:14px;
+  padding:10px 0;
+  font-size:13px; color:var(--text-mid);
+}
+.storage-row .progress-track { flex:1; }
+
+/* 数据表动作 */
+.table-actions { display:flex; gap:6px; justify-content:flex-end; }
+.table-actions .btn { padding:5px 11px; font-size:12.5px; }

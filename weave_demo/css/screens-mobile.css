@@ -1,0 +1,202 @@
+/* ============================================================
+   织脑原型 — 手机端各屏幕布局
+   ============================================================ */
+
+/* ---------- 记忆流 ---------- */
+.memories-list { padding:4px 14px 90px; }
+.memories-list .card { margin-bottom:12px; }
+
+/* 记忆流 AppBar 搜索按钮 */
+.appbar-action {
+  width:38px; height:38px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  color:var(--text-mid);
+}
+.appbar-action:hover { background:var(--surface-2); }
+
+/* ---------- 搜索 ---------- */
+.search-view { background:var(--bg); }
+.search-topbar {
+  display:flex; align-items:center; gap:10px;
+  padding:10px 14px;
+  background:var(--surface);
+  border-bottom:1px solid var(--outline);
+}
+.search-results { padding:4px 14px 40px; }
+.search-results .card { margin-bottom:12px; }
+.recent-searches { padding:14px; display:flex; flex-direction:column; gap:4px; }
+.recent-item {
+  display:flex; align-items:center; gap:10px;
+  padding:9px 4px;
+  font-size:14px; color:var(--text-mid);
+  cursor:pointer;
+}
+.recent-item .icon { width:15px; height:15px; color:var(--text-low); }
+mark { background:#FDE68A; border-radius:3px; padding:0 2px; color:inherit; }
+
+/* ---------- 记忆详情 ---------- */
+.detail-scroll { padding:4px 14px 120px; }
+.detail-hero { padding:6px 0 14px; }
+.detail-title-input {
+  width:100%;
+  font-size:21px; font-weight:750; color:var(--text-hi);
+  border:none; background:none;
+  line-height:1.35;
+  resize:none;
+}
+.detail-meta { display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap; font-size:12.5px; color:var(--text-low); }
+.detail-meta .ctx { display:inline-flex; align-items:center; gap:4px; }
+
+/* 录音/捕捉 Overlay（全屏深色） */
+.capture-overlay {
+  position:absolute; inset:0; z-index:300;
+  background:radial-gradient(120% 90% at 50% 0%, #1E293B 0%, #0F172A 70%);
+  color:#F1F5F9;
+  display:flex; flex-direction:column;
+  animation:fadeIn var(--dur) var(--ease);
+}
+.capture-top {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:16px 18px 0;
+}
+.capture-top .cap-btn {
+  display:inline-flex; align-items:center; gap:6px;
+  color:#CBD5E1; font-size:13px; padding:7px 11px; border-radius:var(--r-full);
+  background:rgba(255,255,255,.06);
+}
+.capture-top .cap-btn:hover { background:rgba(255,255,255,.12); }
+.capture-timer {
+  font-size:56px; font-weight:200; letter-spacing:2px;
+  text-align:center; margin-top:26px;
+  font-variant-numeric:tabular-nums;
+  color:#F8FAFC;
+}
+.capture-wave {
+  display:flex; align-items:center; justify-content:center; gap:3px;
+  height:64px; margin-top:12px;
+}
+.capture-wave .bar {
+  width:4px; border-radius:3px;
+  background:linear-gradient(180deg, var(--record), #FBBF24);
+  transition:height .12s var(--ease);
+}
+.capture-transcript {
+  margin:18px 24px;
+  padding:14px 16px;
+  background:rgba(255,255,255,.05);
+  border-radius:var(--r-lg);
+  border:1px solid rgba(255,255,255,.08);
+  font-size:15px; color:#E2E8F0;
+  line-height:1.7;
+  min-height:78px;
+  max-height:140px;
+  overflow-y:auto;
+}
+.capture-transcript .cap-hint { color:#64748B; font-size:13px; }
+.capture-record-zone {
+  flex:1; display:flex; align-items:center; justify-content:center;
+  flex-direction:column; gap:8px;
+}
+.capture-stop-btn {
+  width:76px; height:76px; border-radius:50%;
+  background:linear-gradient(145deg, #F43F5E, #E11D48);
+  color:#fff;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 0 0 9px rgba(244,63,94,.18), 0 8px 28px rgba(0,0,0,.4);
+  transition:transform .1s var(--ease);
+}
+.capture-stop-btn:active { transform:scale(.92); }
+.capture-stop-btn .icon { width:30px; height:30px; }
+.capture-stop-hint { font-size:13px; color:#94A3B8; }
+.capture-sync-bar {
+  display:flex; align-items:center; justify-content:center; gap:9px;
+  padding:14px;
+  font-size:13px; color:#CBD5E1;
+}
+.capture-sync-bar .sync-dot { width:9px; height:9px; }
+
+/* 捕捉弹层（入口） */
+.capture-entry-options { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.capture-entry-item {
+  display:flex; flex-direction:column; align-items:center; gap:8px;
+  padding:18px 10px;
+  border-radius:var(--r-lg);
+  background:var(--surface-2);
+  font-size:13px; font-weight:600; color:var(--text-hi);
+  cursor:pointer;
+  transition:all var(--dur) var(--ease);
+}
+.capture-entry-item:hover { background:var(--primary-container); color:var(--primary); }
+.capture-entry-item .icon { width:24px; height:24px; }
+.capture-entry-item small { font-size:11px; font-weight:400; color:var(--text-low); }
+
+/* 文字速记 */
+.text-note-view { padding:14px; display:flex; flex-direction:column; height:100%; }
+.text-note-area {
+  flex:1;
+  width:100%;
+  border:none; background:none;
+  font-size:16px; line-height:1.7; color:var(--text-hi);
+  resize:none; padding:4px;
+}
+.completion-hint {
+  display:flex; align-items:center; gap:8px;
+  background:var(--primary-container);
+  color:var(--primary);
+  border-radius:var(--r-md);
+  padding:11px 13px;
+  font-size:13px; font-weight:600;
+  margin-bottom:12px;
+  cursor:pointer;
+}
+.completion-hint .icon { width:16px; height:16px; }
+
+/* 回响 */
+.echo-view { padding:4px 14px 90px; }
+.echo-seg { padding:0 14px 10px; }
+
+/* 我的 */
+.me-view { padding-bottom:20px; }
+.me-section { margin:14px 14px 0; }
+.me-section-title { font-size:12.5px; font-weight:700; color:var(--text-low); margin-bottom:8px; padding-left:4px; }
+.me-card-group { background:var(--surface); border-radius:var(--r-lg); border:1px solid var(--outline); overflow:hidden; }
+.me-card-group .setting-row + .setting-row { border-top:1px solid var(--outline); }
+
+/* AI 设置 */
+.ai-settings-view { padding-bottom:40px; }
+.ai-hero {
+  background:linear-gradient(135deg, #EEF2FF, #E0E7FF);
+  border:1px solid #C7D2FE;
+  border-radius:var(--r-lg);
+  padding:16px;
+  margin:14px;
+}
+.ai-hero-title { font-size:15px; font-weight:700; color:var(--text-hi); display:flex; align-items:center; gap:7px; }
+.ai-hero-title .icon { color:var(--primary); }
+.ai-hero-desc { font-size:12.5px; color:var(--text-mid); margin-top:6px; line-height:1.6; }
+.ai-switch-box {
+  display:flex; align-items:center; justify-content:space-between;
+  margin-top:14px; padding-top:14px;
+  border-top:1px dashed #C7D2FE;
+}
+.ai-switch-box-title { font-size:14px; font-weight:700; }
+.ai-switch-box-sub { font-size:11.5px; color:var(--text-mid); }
+.ai-sub-section { margin:14px 14px 0; }
+.ai-sub-title { font-size:12.5px; font-weight:700; color:var(--text-low); margin-bottom:8px; padding-left:4px; }
+.ai-sub-group { background:var(--surface); border-radius:var(--r-lg); border:1px solid var(--outline); overflow:hidden; }
+.batch-organize-btn { margin:16px 14px 0; }
+
+/* 导入 */
+.import-view { padding:4px 14px 60px; }
+.import-seg { margin-bottom:14px; }
+
+/* 登录 */
+.login-view { padding:14px; display:flex; flex-direction:column; min-height:100%; }
+.login-brand { text-align:center; padding:28px 0 22px; }
+.login-brand .ds-logo { width:56px; height:56px; margin:0 auto 12px; border-radius:16px; }
+.login-brand .ds-logo .icon { width:28px; height:28px; }
+.login-brand h1 { font-size:20px; font-weight:750; }
+.login-brand p { font-size:13px; color:var(--text-low); margin-top:4px; }
+
+/* 工作流 / MCP 通用列表 */
+.placeholder-list { padding:14px; }
