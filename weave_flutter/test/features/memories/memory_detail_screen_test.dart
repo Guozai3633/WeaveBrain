@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:weave_flutter/features/memories/data/memory_api.dart';
 import 'package:weave_flutter/features/memories/ui/memory_detail_screen.dart';
+import 'package:weave_flutter/features/settings/data/ai_settings_api.dart';
 import 'package:weave_flutter/shared/api/api_exception.dart';
 
 CaptureLite _capture({String id = 'c1', String lifecycleStatus = 'active'}) {
@@ -31,6 +32,7 @@ MemoryCardModel _card({
   String? summary = '这是一段摘要',
   List<String> tags = const ['标签一', '标签二'],
   bool isPinned = false,
+  String processingStatus = 'completed',
 }) {
   return MemoryCardModel(
     id: id,
@@ -41,7 +43,7 @@ MemoryCardModel _card({
     summary: summary,
     tags: tags,
     keyPoints: const ['要点一', '要点二'],
-    processingStatus: 'completed',
+    processingStatus: processingStatus,
     version: 1,
     isPinned: isPinned,
     createdAt: DateTime.utc(2026, 8, 29),
@@ -203,7 +205,50 @@ class _FakeGateway implements MemoryGateway {
   }
 }
 
-Widget _buildScreen(_FakeGateway gateway, {String captureId = 'c1'}) {
+class _FakeAiSettingsGateway implements AISettingsGateway {
+  _FakeAiSettingsGateway({bool aiCompletionEnabled = false})
+    // ignore: prefer_initializing_formals
+    : _aiCompletionEnabled = aiCompletionEnabled;
+
+  final bool _aiCompletionEnabled;
+
+  @override
+  Future<AISettingsResult> get() async {
+    return AISettingsResult(
+      settings: AISettings(
+        userId: 'u1',
+        aiMemoryEnabled: false,
+        aiCompletionEnabled: _aiCompletionEnabled,
+        speechToTextEnabled: false,
+        cloudTextAllowed: false,
+        cloudAudioAllowed: false,
+        revision: 1,
+      ),
+      pendingReorganize: 0,
+    );
+  }
+
+  @override
+  Future<AISettings> update({
+    required int expectedRevision,
+    bool? aiMemoryEnabled,
+    bool? aiCompletionEnabled,
+    bool? speechToTextEnabled,
+    bool? cloudTextAllowed,
+    bool? cloudAudioAllowed,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<int> reorganize() => throw UnimplementedError();
+}
+
+Widget _buildScreen(
+  _FakeGateway gateway, {
+  String captureId = 'c1',
+  _FakeAiSettingsGateway? aiSettings,
+}) {
   final router = GoRouter(
     initialLocation: '/home/memories/$captureId',
     routes: [
@@ -231,7 +276,12 @@ Widget _buildScreen(_FakeGateway gateway, {String captureId = 'c1'}) {
     ],
   );
   return ProviderScope(
-    overrides: [memoryGatewayProvider.overrideWithValue(gateway)],
+    overrides: [
+      memoryGatewayProvider.overrideWithValue(gateway),
+      aiSettingsGatewayProvider.overrideWithValue(
+        aiSettings ?? _FakeAiSettingsGateway(),
+      ),
+    ],
     child: MaterialApp.router(routerConfig: router),
   );
 }
@@ -368,5 +418,62 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('版本冲突，请刷新后重试'), findsOneWidget);
+  });
+
+  testWidgets('completion panel is hidden when AI completion is disabled', (
+    tester,
+  ) async {
+    final gateway = _FakeGateway(
+      detail: MemoryDetail(
+        capture: _capture(),
+        memoryCard: _card(processingStatus: 'ready'),
+        revisions: const [],
+      ),
+    );
+    await tester.pumpWidget(
+      _buildScreen(
+        gateway,
+        aiSettings: _FakeAiSettingsGateway(aiCompletionEnabled: false),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('completion_entry_button')), findsNothing);
+  });
+
+  testWidgets('completion panel is hidden when the card is not ready', (
+    tester,
+  ) async {
+    final gateway = _FakeGateway(); // 默认 card processingStatus 'completed'
+    await tester.pumpWidget(
+      _buildScreen(
+        gateway,
+        aiSettings: _FakeAiSettingsGateway(aiCompletionEnabled: true),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('completion_entry_button')), findsNothing);
+  });
+
+  testWidgets('completion panel entry shows when AI completion enabled and ready', (
+    tester,
+  ) async {
+    final gateway = _FakeGateway(
+      detail: MemoryDetail(
+        capture: _capture(),
+        memoryCard: _card(processingStatus: 'ready'),
+        revisions: const [],
+      ),
+    );
+    await tester.pumpWidget(
+      _buildScreen(
+        gateway,
+        aiSettings: _FakeAiSettingsGateway(aiCompletionEnabled: true),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('completion_entry_button')), findsOneWidget);
   });
 }

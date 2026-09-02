@@ -473,3 +473,430 @@ EnrichmentRevision：
 - internal/service/memory_service_test.go：Correct→user revision + version 递增 + provenance；校验失败；AppendNote 不改字段；trashed→404；SetPinned 切换；Archive 幂等；Delete→trashed；GetDetail nil audio/transcript 容忍；fallback 字段派生；
 - internal/api/memory_handler_test.go：list 200+next_cursor / 筛选透传 / detail 200+revisions / 404 / PATCH 200+400 / notes 200+空文本400 / pin / archive / delete / 401 / 各响应含 request_id；
 - internal/db/migration/migration_contract_test.go：迁移 000010 结构、pg_trgm、GIN 索引、source CHECK、Down 顺序。
+
+## 11. R8 AI 补全接口
+
+### 11.1 总则与门控
+
+- 全部 3 个端点均要求 `Authorization: Bearer Token`；未认证/失效 → 401 / UNAUTHORIZED；
+- 用户以认证主体为准，不读 URL 或请求体中的用户字段；
+- 每个成功/错误响应都带 `request_id`（与响应头 X-Request-ID 一致）；
+- 补全目标字段 = MemoryCard 现有列中的 `title` / `primary_type` / `summary` / `tags` / `key_points`（**不含** captured_at / next_step / location / 身份）；
+- **AI 补全关闭时不展示或调用入口**：preview 要求 `ai_completion_enabled && cloud_text_allowed`（原文会发给 LLM）；apply 只要求 `ai_completion_enabled`（apply 不发文本）——不满足均返回 409 / FEATURE_NOT_ENABLED；
+- 卡片必须 `processing_status == 'ready'` 才可补全，否则 409 / PRECONDITION_FAILED；
+- `primary_type == 'uncategorized'`（fallback 恒填值）与空 title/summary/tags/key_points 均视为「缺失字段」，是补全目标；非空字段（用户/导入值）受保护，apply 绝不覆盖。
+
+端点一览：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| POST | /api/v3/captures/{captureId}/completion/preview | 生成字段提案（不改业务对象） |
+| POST | /api/v3/captures/{captureId}/completion/apply | 按提案填充空字段（幂等 + 版本安全） |
+| POST | /api/v3/captures/{captureId}/completion/undo | 撤销最近一次已应用的补全 |
+
+### 11.2 提案模型
+
+`completion_proposals` 一行 = 一个字段提案；同一 preview 批次共享 `preview_id`。
+
+CompletionProposal：
+
+```json
+{
+  "id": "UUID",
+  "user_id": "UUID",
+  "capture_id": "UUID",
+  "preview_id": "UUID",
+  "source_revision": 1,
+  "field_name": "tags",
+  "original_value": "[]",
+  "proposed_value": "[\"工作\",\"灵感\"]",
+  "provenance": "ai",
+  "apply_policy": "safe_auto",
+  "confidence": 0.9,
+  "risk_level": "low",
+  "evidence_spans": [{ "start": 0, "end": 4, "quote": "工作" }],
+  "status": "pending",
+  "provider": "ollama",
+  "model": "qwen2.5:7b",
+  "config_version": "completion-prompt-v1",
+  "created_at": "RFC3339",
+  "updated_at": "RFC3339"
+}
+```
+
+- `field_name` ∈ `title` / `primary_type` / `summary` / `tags` / `key_points`；
+- `proposed_value` 为 TEXT：`tags` / `key_points` 存 JSON 数组字符串（`["a","b"]`），其余为普通字符串；
+- `apply_policy` ∈ `safe_auto`（批量采用）/ `suggest_only`（需逐字段确认）/ `forbidden`（永不应用）；5 个目标字段有证据 → `safe_auto`，无证据 → 降级 `suggest_only`；
+- `evidence_spans` 为原文中的逐字引文（`start`/`end` 为字节偏移，`quote` 为引文）；事实型建议必须有证据片段（标准 4）；
+- `status` ∈ `pending` / `accepted` / `rejected` / `expired`；
+- `source_revision` = 提案依据的 `MemoryCard.version`（乐观并发守卫）。
+
+### 11.3 生成提案 preview
+
+POST /api/v3/captures/{captureId}/completion/preview
+
+- 无请求体；
+- **绝不修改 capture 或 card**（标准 1）；
+- 流程：门控（AICompletion && CloudText）→ 校验 capture 存在 + `ready` → 计算缺失字段 → 新 preview 使该 capture 全部 `pending` 提案过期（旧提案过期，标准 5）→ 缺失字段为空或原文为空 → 直接返回空提案 → 否则调 LLM（45s 超时）生成并落库；
+- `source_revision` = 当前 `card.version`；
+- 响应 200：
+
+```json
+{
+  "preview": {
+    "capture_id": "UUID",
+    "source_revision": 1,
+    "missing_fields": ["tags", "key_points"],
+    "proposals": [ { "…CompletionProposal…" } ]
+  },
+  "request_id": "UUID"
+}
+```
+
+### 11.4 采用提案 apply
+
+POST /api/v3/captures/{captureId}/completion/apply
+
+请求体（最大 1 MiB）：
+
+```json
+{
+  "proposal_ids": ["UUID", "UUID"],
+  "source_revision": 1
+}
+```
+
+- `proposal_ids` 必填且非空；请求体非法 → 400 / INVALID_ARGUMENT；
+- 语义：
+  - **只填空字段**（标准 2）：当前字段非空 → 提案被 `rejected` 且跳过（绝不覆盖用户/导入值，标准 3）；
+  - **幂等**：全部提案已 `accepted` → 200 no-op（返回当前 card + 全部 proposal_ids）；混合 → 只处理 `pending` 子集；
+  - **版本安全**（标准 5）：`pending` 提案若 `source_revision != card.version` → 置 `expired` 并返回 409 / VERSION_CONFLICT；
+  - 产生一条 `source=ai` 的 EnrichmentRevision：`changes` 只含实际填充字段，`provenance["_completion"]` 存 `{"preview_id":…, "undo":{field:原值}}`（undo 原值存 provenance，因 `changes` 是 flat map），逐字段 provenance `"completion"`；`source_revision = captures.version`；`card.version` +1；
+  - 提案置 `accepted`（`accepted_by=userID`）；
+- 响应 200：
+
+```json
+{
+  "apply": {
+    "memory_card": { "…MemoryCard…" },
+    "revision": { "…EnrichmentRevision…" },
+    "applied_proposal_ids": ["UUID"]
+  },
+  "request_id": "UUID"
+}
+```
+
+### 11.5 撤销补全 undo
+
+POST /api/v3/captures/{captureId}/completion/undo
+
+- 无请求体；
+- 语义：
+  - 取最新一条 `source=ai` 且 `provenance["_completion"]` 存在的修订；无 → 409 / PRECONDITION_FAILED（「没有可撤销的补全」）；
+  - 只回滚「当前值仍 == AI 所设值」的字段；用户之后编辑过的字段**跳过**（保护用户后续编辑）；
+  - 无可回滚字段 → 409 / PRECONDITION_FAILED；
+  - 产生一条 `source=user` 的 undo 修订（`provenance["_undo"]=true`、逐字段 `"undo"`），`card.version` +1；提案保持 `accepted`（审计留痕）；
+- 响应 200：
+
+```json
+{
+  "undo": {
+    "memory_card": { "…MemoryCard…" },
+    "revision": { "…EnrichmentRevision…" },
+    "applied_proposal_ids": []
+  },
+  "request_id": "UUID"
+}
+```
+
+### 11.6 错误映射
+
+| 场景 | HTTP | code |
+|---|---|---|
+| proposal_ids 空 / 非法 captureId / 请求体非法 / id 缺失或跨 capture | 400 | INVALID_ARGUMENT |
+| 未认证或 Token 失效 | 401 | UNAUTHORIZED |
+| 记忆不存在、属他人、已软删 | 404 | NOT_FOUND |
+| AI 补全未开启（preview：CloudText 也未开） | 409 | FEATURE_NOT_ENABLED |
+| 卡片未 ready / 无补全可撤销 | 409 | PRECONDITION_FAILED |
+| source_revision 变化后旧提案不可应用 | 409 | VERSION_CONFLICT |
+| 生成失败（LLM 不可用 / 解析失败） | 500 | INTERNAL |
+
+### 11.7 R8 自动化证据
+
+- internal/db/migration/000013_completion_proposals_migration_contract_test.go：迁移结构、CHECK、Down 顺序；
+- internal/db/repository/completion_repository_integration_test.go：真实 PostgreSQL 状态迁移（Create/List/Expire/MarkAccepted）与 confidence 浮点容差；
+- internal/service/completion_service_test.go：preview 门控/不修改对象/无缺失字段/LLM 错误；apply 只填空/幂等/版本冲突/保护非空字段/混合状态；undo 无补全/正常/连续两次/跳过用户编辑字段；
+- internal/service/completion_llm_test.go：strict JSON 解析、field 过滤、长度校验、primary_type 白名单、code-fence 容忍；
+- internal/api/completion_handler_test.go：401 / 400 / 三端点 happy path / 各错误码映射；
+- 前端 test/features/completions/：completion_api_test / completion_notifier_test / completion_panel_test + memory_detail_screen_test 补全入口开关（标准 7）。
+
+---
+
+# 12. 导入接口（R9 / G7）
+
+> 功能：单条文字导入（复用 `POST /captures` kind=import）+ 批量导入（解析 → 预览 → AI 补全 → Commit → 错误报告，8 个端点）。
+> 鉴权：全部端点位于 `protectedV3`，需 Bearer Token（未认证 → 401 / UNAUTHORIZED）。
+> 批量请求体上限：8 MiB（`maxImportRequestBodyBytes`），超限 → 400 / INVALID_ARGUMENT。
+> 格式别名：`txt` / `text` / `markdown` / `md` 归一化为 `plain_text` 解析器。
+
+## 12.0 去重模型
+
+批量导入的去重分两级，Commit 前在服务端预计算并写进每行的 `dedupe_status`：
+
+| 级别 | 判定 | 处理 |
+|---|---|---|
+| `duplicate_external`（硬跳过） | 已有 Capture 的 `(user_id, source_name, external_id)` 精确相等 | Commit 一律跳过（不可被用户覆盖） |
+| `suggested`（疑似） | `content_hash`（正文归一化 SHA-256）命中已有 Capture | 由用户通过 `duplicate_content_action` / `row_actions` 决定导入或跳过（默认导入） |
+
+数据库安全网：`captures` 上部分唯一索引 `uq_captures_user_source_external(user_id, source_name, external_id) WHERE external_id IS NOT NULL AND source_name IS NOT NULL AND deleted_at IS NULL`；疑似查询走 `idx_captures_user_content_hash(user_id, content_hash)`。
+
+## 12.1 单条导入（POST /captures，kind=import）
+
+复用既有 `POST /api/v3/captures`，扩展 import 专属字段；`Idempotency-Key` 必须为合法 UUID 且 == `capture_id`（幂等）。
+
+请求体：
+
+```json
+{
+  "capture_id": "UUID",
+  "kind": "import",
+  "text": "第一条笔记",
+  "external_id": "t1",
+  "source_name": "旧备忘录",
+  "title": "标题（选填，播种初始 MemoryCard）",
+  "tags": ["工作"],
+  "primary_type": "idea",
+  "captured_at": "2026-08-01T00:00:00Z",
+  "captured_at_precision": "date",
+  "timezone": "Asia/Shanghai",
+  "source": "import",
+  "privacy_mode": "standard",
+  "client_version": 1
+}
+```
+
+- `external_id` ≤ 200 rune、`source_name` ≤ 100 rune（否则 400 / INVALID_ARGUMENT）；均可空（普通 capture 不设）。
+- `external_id` + `source_name` 都非空时构成去重键：
+  - 精确命中已有 Capture → **409 / PRECONDITION_FAILED**，`details.existing_capture_id`（「external_id 已导入过」），不创建；
+  - `content_hash` 命中 → 仍创建，响应带 `dedupe`（见下）。
+- 初始 `memory_card` 用 `title` / `primary_type` / `tags` 覆盖播种；缺省 fallback 派生。初始修订 `source=import`。
+
+响应 201（新建）或 200（`Idempotency-Key` 重放）：
+
+```json
+{
+  "capture": { "…Capture…" },
+  "memory_card": { "…MemoryCard…" },
+  "dedupe": {
+    "status": "suggested",
+    "existing_capture_id": "UUID"
+  },
+  "replayed": false,
+  "request_id": "UUID"
+}
+```
+
+- `dedupe` 仅在 `content_hash` 命中时出现（`omitempty`）；`status` ∈ `suggested`。
+- 409 duplicate 响应：
+
+```json
+{
+  "error": {
+    "code": "PRECONDITION_FAILED",
+    "message": "external_id 已导入过",
+    "details": { "existing_capture_id": "UUID" }
+  },
+  "request_id": "UUID"
+}
+```
+
+## 12.2 批量导入工作流
+
+三阶段：**解析 → AI 补全（可选）→ Commit**。补全失败只记单行 `completion_error`，其他行照常；「按原样导入」始终可用。
+
+### 12.2.1 创建任务（解析）
+
+POST /api/v3/imports → 201
+
+```json
+{
+  "format": "csv",
+  "source_name": "旧备忘录",
+  "content": "external_id,content\nt1,第一条\n,第二条",
+  "separator": "---",
+  "timezone": "Asia/Shanghai",
+  "original_filename": "notes.csv",
+  "privacy_mode": "standard"
+}
+```
+
+- `format`：`plain_text` / `csv` / `jsonl`（别名 txt/text/markdown/md → plain_text）；`content` 必填非空。
+- `separator`：仅 `plain_text` 使用，默认 `---`（单独一行等于 separator 分段）。
+- 解析器语义：
+  - plain_text：按单独一行等于 `separator` 分段，空段丢弃，段内空行保留为段落；只填 `content`。
+  - csv（UTF-8，`encoding/csv`）：首行表头（trim + 大小写不敏感映射）；`tags` 用 `|` 分隔；`captured_at` 接受 ISO-8601（RFC3339 或 `2006-01-02` → date_only）；经纬度必须成对且 ∈ [-90,90]/[-180,180]，否则该行 `invalid_coordinates`；`content` 空 → `missing_content`。
+  - jsonl：逐行 JSON，字段同名；坏行 → `invalid_json`（行号稳定）。
+- 创建时即预计算去重（见 12.0），`dedupe_status` 写入每行。
+
+响应：
+
+```json
+{
+  "job": { "…ImportJob…" },
+  "request_id": "UUID"
+}
+```
+
+### 12.2.2 查询任务
+
+GET /api/v3/imports/:id → 200（响应同上 `{job, request_id}`）
+
+### 12.2.3 预览
+
+GET /api/v3/imports/:id/preview?limit=10&offset=0 → 200
+
+- `limit` 必须为正整数（默认 10）、`offset` 非负（默认 0），否则 400。
+- 预览会把 job 状态置为 `previewed`（幂等）。
+
+```json
+{
+  "preview": {
+    "job": { "…ImportJob…" },
+    "rows": [ { "…ImportRow…" } ],
+    "next_cursor": "10"
+  },
+  "request_id": "UUID"
+}
+```
+
+### 12.2.4 AI 补全预览
+
+POST /api/v3/imports/:id/completion/preview
+
+```json
+{ "row_numbers": [1, 3] }
+```
+
+- `row_numbers` 缺省 = 全部行。
+- 门控：`AICompletionEnabled && CloudTextAllowed`（内容发给 LLM）；关闭 → **409 / FEATURE_NOT_ENABLED**（「AI 补全未开启」）。
+- 每行算缺失字段 → 复用 R8 `FieldProposalGenerator` 生成提案 → `SetRowCompletion` 持久化。**单行 LLM 失败只记该行 `completion_error`，其他行照常返回**。
+
+```json
+{
+  "completion": {
+    "rows": [ { "…ImportRow（含 completion_proposals）…" } ]
+  },
+  "request_id": "UUID"
+}
+```
+
+### 12.2.5 采用提案
+
+POST /api/v3/imports/:id/completion/apply
+
+```json
+{
+  "row_selections": [
+    { "row_number": 1, "proposal_ids": ["UUID"] }
+  ]
+}
+```
+
+- 选定提案置 `accepted`，同行其余 `pending` 置 `rejected`；幂等。
+- 采用成功后，Commit 时会给对应行写一条 `source=ai` 的补全修订（provenance `{"source":"ai"}`）。
+
+响应 200：`{ "completion": { "rows": [...] }, "request_id" }`。
+
+### 12.2.6 Commit
+
+POST /api/v3/imports/:id/commit → 200
+
+```json
+{
+  "duplicate_content_action": "import",
+  "row_actions": { "2": "skip" },
+  "skip_needs_input": true
+}
+```
+
+- `duplicate_content_action`：`import`（默认）/ `skip`，作用于 `suggested` 疑似重复行；`row_actions` 按 `row_number` 覆盖（`import`/`skip`）。`skip_needs_input` 本轮恒跳过 needs_input 行并计入报告（字段为前向兼容保留）。
+- 提交语义：
+  - 已 `imported` 行快进跳过（**幂等**：重复 Commit 不产生新 Capture，计数返回已存结果）；
+  - `duplicate_external` → 跳过；`suggested` → 按策略；`needs_input`/校验错误 → 跳过并计入对应统计；
+  - 其余行：**`capture_id = 行 id`（确定性 UUID）**，每行独立短事务（`store.BeginTx`）经 `NewCaptureService(txStore.Capture, settings).Create({Kind:import, Text:content, Source:"import", SourceName, ExternalID, …})` 落库，幂等靠 Capture CTE `ON CONFLICT (user_id,id) DO NOTHING`；有 accepted 提案则追加 `source=ai` 修订；成功 → 行 `imported`，失败 → 行 `failed`（**行级隔离：一行失败不影响其他行**）；
+  - 全部处理完 → job 置 `completed` 并汇总计数。
+- 地点/时间缺失：`captured_at`/地点字段缺失时保持 unknown（不伪装导入时间，不猜测坐标）。
+
+```json
+{
+  "commit": {
+    "imported": 1,
+    "failed": 0,
+    "skipped": 1,
+    "needs_input": 0,
+    "total": 2,
+    "job_status": "completed",
+    "committed_at": "2026-08-29T00:00:00Z"
+  },
+  "request_id": "UUID"
+}
+```
+
+### 12.2.7 错误报告
+
+GET /api/v3/imports/:id/error-report?format=json|csv
+
+- 返回 Commit 后未成功导入的行（failed / skipped / needs_input）及 `validation_errors`。
+- `format=csv` → `Content-Type: text/csv; charset=utf-8` + `Content-Disposition: attachment; filename="import_error_report.csv"`，表头 `row_number,external_id,status,dedupe_status,error_code,error_message`（多错误 `;` 连接）。
+- 默认 JSON → 200：
+
+```json
+{
+  "entries": [
+    {
+      "row_number": 2,
+      "external_id": "t2",
+      "status": "failed",
+      "dedupe_status": "none",
+      "validation_errors": [
+        { "code": "invalid_coordinates", "message": "经纬度无效" }
+      ]
+    }
+  ],
+  "request_id": "UUID"
+}
+```
+
+### 12.2.8 取消
+
+POST /api/v3/imports/:id/cancel → 200（`{job, request_id}`），未完成 job 置 `cancelled`。
+
+## 12.3 数据模型
+
+**ImportJob**：`id`(UUID) / `user_id` / `source_name` / `format`(plain_text|csv|jsonl) / `original_filename`? / `raw_text` / `column_mapping`(JSONB) / `separator` / `timezone`? / `total_rows` / `valid_rows` / `invalid_rows` / `duplicate_rows` / `needs_input_rows` / `imported_rows` / `skipped_rows` / `failed_rows` / `status`(draft|previewed|completed|failed|cancelled) / `committed_at`? / `cancelled_at`? / `created_at` / `updated_at`。
+
+**ImportRow**：`id`(UUID) / `import_job_id` / `user_id` / `row_number` / `external_id`? / `raw_payload`(JSONB) / `normalized_payload`(JSONB) / `content`? / `content_hash`? / `validation_errors`(JSONB) / `dedupe_status`(none|duplicate_external|suggested) / `capture_id`? / `status`(pending|needs_input|importing|imported|skipped|failed) / `completion_proposals`(JSONB) / `imported_at`? / `created_at` / `updated_at`。
+
+**ImportFieldProposal**（复用 R8 类型）：`id` / `field_name` / `proposed_value` / `provenance`(ai|user|import|fallback) / `apply_policy`(safe_auto|suggest_only|forbidden) / `confidence` / `evidence_spans` / `status`(pending|accepted|rejected|expired)。
+
+## 12.4 错误映射
+
+| 场景 | HTTP | code |
+|---|---|---|
+| 请求体非法 / format 非法 / id 非 UUID / limit≤0 / offset<0 / external_id>200 / source_name>100 / content 为空 | 400 | INVALID_ARGUMENT |
+| 未认证或 Token 失效 | 401 | UNAUTHORIZED |
+| 任务不存在、属他人 | 404 | NOT_FOUND |
+| 任务已 completed（再次 Commit/Cancel） | 409 | PRECONDITION_FAILED |
+| AI 补全未开启（completion/preview 且 CloudText 未开） | 409 | FEATURE_NOT_ENABLED |
+| 单条导入 external_id 重复 | 409 | PRECONDITION_FAILED（`details.existing_capture_id`） |
+| 补全生成失败（LLM 不可用 / 解析失败） | 500 | INTERNAL |
+
+## 12.5 R9 自动化证据
+
+- internal/db/migration/000014_import_tables_migration_contract_test.go：迁移结构、CHECK、部分唯一索引、Down 顺序；
+- internal/db/repository/import_repository_integration_test.go：真实 PostgreSQL 原子建任务 / ListRows / MarkRowState / SetRowCompletion / 去重查询 / 唯一索引兜底；
+- internal/service/import_parser_test.go：plain-text / CSV / JSONL 表驱动解析；
+- internal/service/import_service_test.go：CreateJob 持久化 + 去重标记、Commit 行级隔离、Commit 幂等、补全失败可按原样导入、accepted 提案出 `source=ai` 修订；
+- internal/api/import_handler_test.go：401/400/404/409/500 映射、三阶段 happy path、错误报告 CSV content-type；
+- internal/service/capture_service_test.go（扩展）+ internal/api/capture_handler_test.go（扩展）：kind=import 归一化、external_id 重复 → 409、content_hash → dedupe.suggested；
+- 前端 test/features/imports/：import_api_test / import_notifier_test / import_screen_test + widget_test / settings / capture 入口回归。

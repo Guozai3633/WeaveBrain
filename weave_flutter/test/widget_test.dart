@@ -8,10 +8,138 @@ import 'package:sembast/sembast_memory.dart';
 
 import 'package:weave_flutter/features/capture/data/sembast_local_capture_store.dart';
 import 'package:weave_flutter/features/capture/domain/capture_providers.dart';
+import 'package:weave_flutter/features/imports/data/import_api.dart';
 import 'package:weave_flutter/features/memories/data/memory_api.dart';
+import 'package:weave_flutter/features/settings/data/ai_settings_api.dart';
 import 'package:weave_flutter/main.dart';
 
 // ---- 测试辅助：记忆网关替身 ----
+
+class _FakeAiSettingsGateway implements AISettingsGateway {
+  @override
+  Future<AISettingsResult> get() async {
+    return AISettingsResult(
+      settings: AISettings(
+        userId: 'u1',
+        aiMemoryEnabled: false,
+        aiCompletionEnabled: false,
+        speechToTextEnabled: false,
+        cloudTextAllowed: false,
+        cloudAudioAllowed: false,
+        revision: 1,
+      ),
+      pendingReorganize: 0,
+    );
+  }
+
+  @override
+  Future<AISettings> update({
+    required int expectedRevision,
+    bool? aiMemoryEnabled,
+    bool? aiCompletionEnabled,
+    bool? speechToTextEnabled,
+    bool? cloudTextAllowed,
+    bool? cloudAudioAllowed,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<int> reorganize() => throw UnimplementedError();
+}
+
+class _FakeImportGateway implements ImportGateway {
+  @override
+  Future<ImportJobModel> createJob({
+    required String format,
+    required String sourceName,
+    required String content,
+    String? separator,
+    String? timezone,
+    String? originalFilename,
+  }) async {
+    return ImportJobModel(
+      id: 'job1',
+      userId: 'u1',
+      sourceName: sourceName,
+      format: format,
+      rawText: content,
+      columnMapping: const {},
+      separator: separator ?? '---',
+      totalRows: 0,
+      validRows: 0,
+      invalidRows: 0,
+      duplicateRows: 0,
+      needsInputRows: 0,
+      importedRows: 0,
+      skippedRows: 0,
+      failedRows: 0,
+      status: 'draft',
+      createdAt: DateTime.utc(2026, 8, 29),
+      updatedAt: DateTime.utc(2026, 8, 29),
+    );
+  }
+
+  @override
+  Future<ImportJobModel> getJob(String jobId) =>
+      throw UnimplementedError();
+
+  @override
+  Future<ImportPreviewModel> preview(
+    String jobId, {
+    int limit = 10,
+    int offset = 0,
+  }) async {
+    return ImportPreviewModel(
+      job: await createJob(
+        format: 'plain_text',
+        sourceName: '旧备忘录',
+        content: '',
+      ),
+      rows: const [],
+    );
+  }
+
+  @override
+  Future<ImportCompletionModel> completionPreview(
+    String jobId, {
+    List<int>? rowNumbers,
+  }) =>
+      throw UnimplementedError();
+
+  @override
+  Future<ImportCompletionModel> completionApply(
+    String jobId, {
+    required List<ImportRowSelection> selections,
+  }) =>
+      throw UnimplementedError();
+
+  @override
+  Future<ImportCommitResultModel> commit(
+    String jobId, {
+    required String duplicateContentAction,
+    Map<int, String>? rowActions,
+  }) async {
+    return ImportCommitResultModel(
+      imported: 0,
+      failed: 0,
+      skipped: 0,
+      needsInput: 0,
+      total: 0,
+      jobStatus: 'completed',
+    );
+  }
+
+  @override
+  Future<List<ImportErrorReportEntryModel>> errorReport(String jobId) async {
+    return const [];
+  }
+
+  @override
+  Future<SingleImportResult> importSingle(SingleImportDraft draft) async {
+    return SingleImportResult(captureId: 'imported-c1');
+  }
+}
 
 class _FakeMemoryGateway implements MemoryGateway {
   final List<String> detailCalls = [];
@@ -130,6 +258,8 @@ Future<_FakeMemoryGateway> _pumpApp(
         localCaptureStoreProvider.overrideWith((ref) async => store),
         captureSyncBootstrapProvider.overrideWith((ref) {}),
         memoryGatewayProvider.overrideWithValue(fakeGateway),
+        aiSettingsGatewayProvider.overrideWithValue(_FakeAiSettingsGateway()),
+        importGatewayProvider.overrideWithValue(_FakeImportGateway()),
       ],
       child: const WeaveBrainApp(),
     ),

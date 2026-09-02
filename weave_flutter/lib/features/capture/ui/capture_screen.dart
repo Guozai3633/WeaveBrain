@@ -72,6 +72,12 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen> {
       appBar: AppBar(
         title: const Text('快速记录'),
         actions: [
+          if (!isGuest)
+            IconButton(
+              tooltip: '导入旧记忆',
+              onPressed: () => context.push('/imports'),
+              icon: const Icon(Icons.upload_file_outlined),
+            ),
           IconButton(
             tooltip: '重试同步',
             onPressed: _retry,

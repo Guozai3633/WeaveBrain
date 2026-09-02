@@ -15,6 +15,7 @@ const (
 	EnrichmentSourceFallback EnrichmentSource = "fallback"
 	EnrichmentSourceAI       EnrichmentSource = "ai"
 	EnrichmentSourceUser     EnrichmentSource = "user"
+	EnrichmentSourceImport   EnrichmentSource = "import"
 )
 
 // EnrichmentRevision is an immutable revision of a MemoryCard's AI-claimed

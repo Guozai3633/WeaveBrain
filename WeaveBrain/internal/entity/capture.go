@@ -26,6 +26,9 @@ type Capture struct {
 	Source              string      `json:"source"`
 	CollectionID        *int64      `json:"collection_id,omitempty"`
 	PrivacyMode         string      `json:"privacy_mode"`
+	ExternalID          *string     `json:"external_id,omitempty"`
+	SourceName          *string     `json:"source_name,omitempty"`
+	ContentHash         *string     `json:"-"`
 	RequestHash         string      `json:"-"`
 	ClientVersion       int         `json:"client_version"`
 	Version             int64       `json:"version"`
@@ -102,4 +105,12 @@ func FromAISettings(s *UserAISettings) *PolicySnapshot {
 type CaptureAggregate struct {
 	Capture    *Capture    `json:"capture"`
 	MemoryCard *MemoryCard `json:"memory_card"`
+}
+
+// CaptureDedupe reports a content-hash duplicate hit during a single import.
+// A non-nil ExistingCaptureID is a "suspected duplicate" — the import still
+// proceeds; the client decides whether to keep or discard it.
+type CaptureDedupe struct {
+	Status            string     `json:"status"`
+	ExistingCaptureID *uuid.UUID `json:"existing_capture_id,omitempty"`
 }

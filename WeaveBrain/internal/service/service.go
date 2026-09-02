@@ -1,6 +1,9 @@
 package service
 
 import (
+	"context"
+
+	"weavebrain/internal/agent"
 	"weavebrain/internal/db/repository"
 )
 
@@ -19,6 +22,8 @@ type Services struct {
 	Embedding    *EmbeddingService
 	AISettings   *AISettingsService
 	Memory       *MemoryService
+	Completion   *CompletionService
+	Import       *ImportService
 	OutboxWorker *OutboxWorker
 	Store        *repository.DBStore
 }
@@ -45,6 +50,10 @@ func New(store *repository.DBStore, encryptionKey []byte) *Services {
 		outboxWorker = NewOutboxWorker(store.Outbox, store.Capture, DefaultEnrichmentPipeline(), OutboxWorkerConfig{})
 	}
 
+	// The completion generator needs the LLM; when it fails to construct the
+	// service still boots and Preview reports ErrCompletionLLM.
+	completionGenerator, _ := NewLLMFieldProposalGenerator(context.Background(), agent.DefaultLLMConfig())
+
 	return &Services{
 		User:         userSvc,
 		Identity:     NewIdentityService(store),
@@ -56,6 +65,8 @@ func New(store *repository.DBStore, encryptionKey []byte) *Services {
 		Agent:        NewAgentService(envAdapter, profileAdapter, createIdeaAdapter, queryIdeasAdapter, reminderAdapter, store.MCPAuditLog, store, encryptionKey),
 		AISettings:   aiSettingsSvc,
 		Memory:       NewMemoryService(store.Memory, store.Capture, store.AudioAsset, store.Transcript),
+		Completion:   NewCompletionService(store.Capture, store.Memory, store.AISettings, store.Completion, completionGenerator),
+		Import:       NewImportService(store, store.Import, store.AISettings, completionGenerator),
 		OutboxWorker: outboxWorker,
 		Store:        store,
 	}

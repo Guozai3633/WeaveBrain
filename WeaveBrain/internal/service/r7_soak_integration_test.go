@@ -99,16 +99,10 @@ func TestR7BatchSoakIntegration(t *testing.T) {
 
 	store := repository.NewFromPool(pool)
 
-	// This test drives the worker globally and aggregates all capture_outbox
-	// rows, so clear any rows other integration tests left in this shared test
-	// database before seeding (otherwise leftover rows skew the terminal counts).
-	if _, err := pool.Exec(ctx, "DELETE FROM capture_outbox"); err != nil {
-		t.Fatalf("clean capture_outbox: %v", err)
-	}
-
 	aiOnID := uuid.New()
 	aiOffID := uuid.New()
 	cancelID := uuid.New()
+	soakUserIDs := []uuid.UUID{aiOnID, aiOffID, cancelID}
 	for _, u := range []struct{ id uuid.UUID; name string }{
 		{aiOnID, "soak-ai-on"},
 		{aiOffID, "soak-ai-off"},
@@ -121,6 +115,17 @@ func TestR7BatchSoakIntegration(t *testing.T) {
 		); err != nil {
 			t.Fatalf("seed user %s: %v", u.name, err)
 		}
+	}
+
+	// This test drives the worker and aggregates outbox terminal counts. Scope
+	// cleanup to this test's own users so concurrent integration tests sharing
+	// the same database (other packages running in parallel) are not disturbed.
+	if _, err := pool.Exec(
+		ctx,
+		"DELETE FROM capture_outbox WHERE user_id = ANY($1)",
+		soakUserIDs,
+	); err != nil {
+		t.Fatalf("clean capture_outbox: %v", err)
 	}
 
 	settings := &r7SettingsMapSource{settings: map[uuid.UUID]*entity.UserAISettings{
@@ -225,7 +230,8 @@ func TestR7BatchSoakIntegration(t *testing.T) {
 		var remaining int
 		if err := pool.QueryRow(
 			ctx,
-			"SELECT count(*) FROM capture_outbox WHERE status IN ('queued','retry_wait','processing')",
+			"SELECT count(*) FROM capture_outbox WHERE user_id = ANY($1) AND status IN ('queued','retry_wait','processing')",
+			soakUserIDs,
 		).Scan(&remaining); err != nil {
 			t.Fatalf("count remaining outbox rows: %v", err)
 		}
@@ -238,9 +244,9 @@ func TestR7BatchSoakIntegration(t *testing.T) {
 		time.Sleep(15 * time.Millisecond)
 	}
 
-	// Aggregate terminal states across all seeded rows.
+	// Aggregate terminal states across this test's seeded rows only.
 	statusCounts := map[string]int{}
-	rows, err := pool.Query(ctx, "SELECT status FROM capture_outbox")
+	rows, err := pool.Query(ctx, "SELECT status FROM capture_outbox WHERE user_id = ANY($1)", soakUserIDs)
 	if err != nil {
 		t.Fatalf("query outbox states: %v", err)
 	}

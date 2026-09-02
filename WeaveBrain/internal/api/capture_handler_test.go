@@ -267,6 +267,119 @@ func TestCaptureHandlerGetUsesAuthenticatedUserAndHidesOtherUsers(t *testing.T) 
 	}
 }
 
+func TestCaptureHandlerImportPassthroughAndDedupe(t *testing.T) {
+	userID := uuid.New()
+	captureID := uuid.New()
+	var got service.CreateCaptureInput
+	useCase := &fakeCaptureUseCase{
+		createFn: func(
+			_ context.Context,
+			_ uuid.UUID,
+			input service.CreateCaptureInput,
+		) (*service.CreateCaptureResult, error) {
+			got = input
+			existingID := uuid.New()
+			result := &service.CreateCaptureResult{
+				Aggregate: captureAggregate(userID, captureID, input.Text),
+				Replayed:  false,
+				Dedupe: &entity.CaptureDedupe{
+					Status:            "suggested",
+					ExistingCaptureID: &existingID,
+				},
+			}
+			result.Aggregate.Capture.Kind = entity.CaptureKindImport
+			return result, nil
+		},
+		getFn: func(context.Context, uuid.UUID, uuid.UUID) (*entity.CaptureAggregate, error) {
+			panic("unexpected get")
+		},
+	}
+	engine := newCaptureHandlerTestEngine(userID, useCase)
+	body := []byte(`{
+		"capture_id":"` + captureID.String() + `",
+		"kind":"import",
+		"text":"旧笔记内容",
+		"source_name":"旧备忘录",
+		"external_id":"t1",
+		"title":"自定义标题",
+		"tags":["工作","存档"],
+		"primary_type":"note",
+		"client_version":1
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v3/captures", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(idempotencyKeyHeader, captureID.String())
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if got.Kind != entity.CaptureKindImport {
+		t.Fatalf("expected kind import, got %s", got.Kind)
+	}
+	if got.ExternalID == nil || *got.ExternalID != "t1" {
+		t.Fatalf("unexpected external_id: %#v", got.ExternalID)
+	}
+	if got.SourceName == nil || *got.SourceName != "旧备忘录" {
+		t.Fatalf("unexpected source_name: %#v", got.SourceName)
+	}
+	if got.TitleOverride == nil || *got.TitleOverride != "自定义标题" {
+		t.Fatalf("unexpected title override: %#v", got.TitleOverride)
+	}
+	if len(got.TagsOverride) != 2 || got.TagsOverride[0] != "工作" {
+		t.Fatalf("unexpected tags override: %#v", got.TagsOverride)
+	}
+	if got.PrimaryTypeOverride == nil || *got.PrimaryTypeOverride != "note" {
+		t.Fatalf("unexpected primary_type override: %#v", got.PrimaryTypeOverride)
+	}
+
+	var response CaptureResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Dedupe == nil || response.Dedupe.Status != "suggested" || response.Dedupe.ExistingCaptureID == nil {
+		t.Fatalf("expected dedupe in response, got %#v", response.Dedupe)
+	}
+}
+
+func TestCaptureHandlerMapsDuplicateExternalID(t *testing.T) {
+	userID := uuid.New()
+	captureID := uuid.New()
+	existingID := uuid.New()
+	useCase := &fakeCaptureUseCase{
+		createFn: func(context.Context, uuid.UUID, service.CreateCaptureInput) (*service.CreateCaptureResult, error) {
+			return nil, &service.DuplicateExternalIDError{ExistingCaptureID: existingID}
+		},
+		getFn: func(context.Context, uuid.UUID, uuid.UUID) (*entity.CaptureAggregate, error) {
+			return nil, service.ErrCaptureNotFound
+		},
+	}
+	engine := newCaptureHandlerTestEngine(userID, useCase)
+	body := []byte(`{"capture_id":"` + captureID.String() + `","kind":"import","text":"x","source_name":"旧备忘录","external_id":"t1","client_version":1}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v3/captures", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(idempotencyKeyHeader, captureID.String())
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, req)
+
+	assertV3ErrorResponse(
+		t,
+		recorder,
+		http.StatusConflict,
+		V3ErrorPreconditionFailed,
+		recorder.Header().Get(requestIDHeader),
+	)
+	var response V3ErrorResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	gotID, ok := response.Details["existing_capture_id"].(string)
+	if !ok || gotID != existingID.String() {
+		t.Fatalf("expected details.existing_capture_id=%s, got %#v", existingID, response.Details)
+	}
+}
+
 func TestV3JWTMiddlewareUsesV3ErrorContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()

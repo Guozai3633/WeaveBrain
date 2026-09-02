@@ -1238,3 +1238,106 @@
 
 ### 下一步
 - G6 / R8：AI 补全（CompletionProposal / FieldProposal、completion:preview / apply、evidence_spans、safe_auto/suggest_only/forbidden、逐字段采用 + 版本与撤销、详情页补全入口、旧提案过期）
+
+---
+
+## Sprint 20: R8 AI 补全（G6）
+**状态**: ✅ 已完成（真机 / E2E 待验证）
+
+### 已完成
+
+#### 后端：completion_proposals + preview/apply/undo
+- [x] 迁移 000013：completion_proposals（一行 = 一个字段提案，同批次共享 preview_id；field_name CHECK ∈ title/primary_type/summary/tags/key_points；provenance/apply_policy/status CHECK；evidence_spans JSONB；FK 级联 captures(user_id,id)；preview/capture_status 索引；Down 可逆）+ 契约测试
+- [x] 实体 internal/entity/completion.go：ProposalStatus / ApplyPolicy（safe_auto/suggest_only/forbidden）/ Provenance / EvidenceSpan / CompletionProposal / CompletionPreviewResult / CompletionApplyResult
+- [x] 仓储 completion_repository.go：CreateProposals / ListByIDs / ListPendingByCapture / ExpireAllPending / MarkAccepted（status='pending' 守卫幂等）/ MarkRejected / MarkExpired；interface.go + store.go（NewFromPool + BeginTx 两处装配）；真实 PG 集成测试（confidence 浮点容差）
+- [x] LLM 生成器 completion_llm.go：FieldProposalGenerator 接口 + LLMFieldProposalGenerator（agent.NewChatModel，LLM_BASE_URL/API_KEY/MODEL 默认 localhost:11434/v1/ollama/qwen2.5:7b）；strict JSON 数组解析（取首个 `[` 至末个 `]` 容忍 code-fence）、过滤非法字段、长度校验 + primary_type 白名单、非数组 → ErrCompletionLLM（500）
+- [x] 服务 completion_service.go + service.go 装配：Preview（门控 AICompletion && CloudTextAllowed；不改业务对象；新 preview 使旧 pending 过期；source_revision=card.Version）；Apply（仅门控 AICompletion；幂等全 accepted no-op；版本冲突 → 过期 + 409；非空字段保护 → rejected；ai 修订 `provenance._completion` 存 undo 原值 + card.version+1）；Undo（回滚「当前值仍==AI 所设」字段，用户后续编辑跳过；source=user 撤销修订；提案保持 accepted）；生成器 nil 容忍（Preview 500，Apply/Undo 正常）
+- [x] 处理器 completion_handler.go + server.go：POST /captures/:captureId/completion/{preview,apply,undo}；错误映射 FEATURE_NOT_ENABLED / PRECONDITION_FAILED / VERSION_CONFLICT / NOT_FOUND / INVALID_ARGUMENT / INTERNAL；响应带 request_id
+
+#### 前端：completions feature + 详情页接入
+- [x] completion_api.dart：EvidenceSpanModel / CompletionProposalModel（proposedValues 解析 JSON 数组、canAutoApply）/ PreviewResult / ApplyResult（复用 MemoryCardModel）+ CompletionGateway 抽象 + CompletionApi + provider
+- [x] completion_notifier.dart：sealed state；loadPreview / applyAllSafe（只发 safe_auto pending + sourceRevision）/ applyOne / undo / clearMessage；409 分码提示（FEATURE_NOT_ENABLED「AI 补全未开启」/ VERSION_CONFLICT「提案已过期，请重新生成」/ PRECONDITION_FAILED）
+- [x] completion_panel.dart：入口开关 Key('completion_entry_button')「AI 补全」；提案卡片（字段中文标签 + 建议值 chips + 证据引文 chip + 「AI 建议/需确认」policy chip + 置信度）；「全部采用安全字段」批量 + 逐字段「采用」+「撤销上次补全」；disabled → SizedBox.shrink() 零调用
+- [x] memory_detail_screen.dart 接入：`_aiCompletionAvailable`（AI 补全开启 && 卡片 ready 才展示）+ onApplied 刷新详情
+- [x] 测试：completion_api_test（9）/ completion_notifier_test（11）/ completion_panel_test（8）/ memory_detail_screen_test（+3 面板开关）/ widget_test（aiSettingsGatewayProvider fake override）
+
+### 技术决策
+- undo 原值存 `provenance._completion.undo`（changes 是 flat map，无法表达 from/to）；已记入 API_V3_CONTRACT §11.4 与 R08 报告
+- proposed_value 用 TEXT：tags/key_points 存 JSON 数组字符串，解码只在服务 apply + 前端 model 两处，配单测锁定格式
+- source_revision：提案 = card.Version（并发守卫）；补全修订 = captures.Version（审计口径，与 Correct 一致）
+- primary_type='uncategorized' 视为缺失（fallback 恒填）；title/summary 有 fallback 值 → 默认受保护，本轮不覆盖（改写留 R9+）
+- 门控分层：preview 需 AICompletion && CloudTextAllowed（原文发 LLM）；apply 仅 AICompletion（不发文本）
+- confidence REAL=float4 精度丢失 → 集成测试用 math.Abs 容差（保留计划 REAL 列）
+
+### 验证
+- [x] `go build ./...` / `go vet ./...` 通过
+- [x] `go test ./...`（无 env）**301** 全绿（R7 236 → +65）；真实 PG **308** 全绿（R7 242 → +66；迁移 000001—000013 + completion 仓储集成实际运行）
+- [x] goose 迁移 000013 up/down 可逆
+- [x] `dart analyze lib test` 0 issue；`flutter test` **144** 全绿（R7 113 → +31）
+
+### 报告
+- [x] docs/round-reports/R08_REPORT.md
+- [x] docs/API_V3_CONTRACT.md §11（AI 补全接口）
+- [x] docs/DEVELOPMENT_GOALS.md G6（5 步 + 7 完成条件全部勾选）
+
+### 已知限制
+- title/summary 受保护不改写（R9+ 显式确认）；Ollama 严格 JSON 遵从度有限（解析容忍 code-fence，非数组 → 500）；`flutter analyze` 本机崩溃用 `dart analyze` 替代；真机 / E2E（Ollama smoke）待验证
+
+### 下一步
+- G7 / R9：单条与批量导入（单条文字/音频/文件、多段文本/TXT/Markdown/CSV/JSONL、字段映射 + 前 10 条预览、AI 补全缺失项 + 去重 + Commit + 行级错误隔离、结果/错误报告下载）
+
+---
+
+## Sprint 21: R9 单条与批量导入（G7）
+**状态**: ✅ 已完成（后端 337 无 env + 356 真实 PG 集成全绿 + 前端 184 全绿）
+
+### 已完成
+
+#### 后端：迁移 000014 + 单条导入 capture 管道扩展
+- [x] 迁移 000014：captures ADD COLUMN external_id / source_name / content_hash + 部分唯一索引 `uq_captures_user_source_external`（去重 DB 安全网）+ `idx_captures_user_content_hash`；`memory_card_revisions_source_check` 加 `'import'`；import_jobs / import_rows 全结构（format/status/dedupe_status CHECK、completion_proposals JSONB、UNIQUE(import_job_id,row_number)、job+hash 索引）+ 契约测试
+- [x] Capture 管道：Capture 加 ExternalID/SourceName/ContentHash + CaptureDedupe；`normalizeAndHashContent`（trim + 折叠空白 + SHA-256）；CreateCaptureInput 加 ExternalID/SourceName/Title/PrimaryType/Tags override；kind=import 归一化（默认 source=import）；`initialEnrichmentRevision` 参数化 source；`ErrDuplicateExternalID` 哨兵 + `DuplicateExternalIDError`（带 existing_capture_id）；外部 ID 精确 → 409，content_hash 命中 → Dedupe.suggested 但仍创建
+- [x] capture_repository CTE：INSERT captures 加 3 列 + `memory_card_revisions` source 参数化（`'fallback'` → `$27`）
+
+#### 后端：批量导入（ImportService + 解析器 + 仓储 + 处理器）
+- [x] 实体 internal/entity/import.go：ImportJob / ImportRow / ImportFieldProposal（复用 R8 类型）/ ImportPreviewResult / ImportCompletionResult / ImportCommitResult / ImportErrorReportEntry
+- [x] 仓储 import_repository.go：CreateJob（单事务 job+rows 原子）/ GetJob / ListRows / GetRowsByNumbers / UpdateJobStatus / MarkRowState / SetRowCompletion / FindExternalDuplicates / FindContentHashMatches；interface.go + store.go（NewFromPool + BeginTx 两处装配）+ 真实 PG 集成测试
+- [x] 解析器 import_parser.go：plainTextParser（separator 分段）/ csvParser（表头映射、tags `|`、captured_at ISO-8601、经纬度成对+范围、坏行隔离）/ jsonlParser（逐行 JSON，坏行 invalid_json）+ 表驱动测试
+- [x] ImportService + service.go 装配：CreateJob（校验 + 解析 + 预计算去重 + 原子建 job）→ GetPreview（前 10 + 状态 previewed 幂等）→ CompletionPreview（门控 AICompletion&&CloudTextAllowed，单行 LLM 失败不阻塞）→ CompletionApply（accepted/rejected 幂等）→ Commit（**capture_id=row.id 确定性 + 每行独立事务 + CTE ON CONFLICT 幂等**；duplicate_external 硬跳过 / suggested 用户策略；行级隔离）→ GetErrorReport / Cancel
+- [x] 处理器 import_handler.go + server.go：8 端点（POST /imports 201、GET /imports/:id、GET preview?limit&offset、completion/preview、completion/apply、commit、error-report?format=csv|json、cancel）+ 错误映射（400/401/404/409/409 FEATURE_NOT_ENABLED/500）+ 8 MiB body 上限；capture_handler 扩展（kind=import 透传 + Dedupe 响应 + 409 existing_capture_id）
+
+#### 前端：imports feature + 入口/路由
+- [x] import_api.dart：手写模型（蛇形映射）+ ImportGateway 抽象 + ImportApi（importSingle 发 POST /captures kind=import + Idempotency-Key + 409 → ImportDuplicateException）+ provider；text_file_reader（IO readAsString / Web FileReader 条件导出）
+- [x] import_notifier.dart：sealed ImportState（Idle/Creating/Created/Previewed/Committing/Committed/Error）+ importNotifierProvider
+- [x] import_screen.dart：单条/批量 SegmentedButton；单条（content 必填 + 选填元数据 → importSingle → 跳详情页 / 409 提示既有记忆链接）；批量（粘贴/文件选择、格式下拉、解析并预览前 10 行表格 + 去重 chip、AI 补全勾选采用、开始导入 + 重复内容策略、结果页 + 错误报告下载）
+- [x] 入口：settings_screen「导入旧记忆」ListTile + capture_screen AppBar 导入 IconButton（已认证才显示）+ app.dart `/imports` 路由
+- [x] 测试：import_api_test / import_notifier_test / import_screen_test + widget_test（ImportGateway fake override）+ settings/capture 回归
+
+### 技术决策
+- 确定性 `capture_id = import_rows.id`：重复 Commit 幂等靠 Capture CTE `ON CONFLICT (user_id,id) DO NOTHING` + imported 行快进，不靠状态竞态（标准 3 双保险）
+- 去重收敛两级：external_id 精确硬跳过 + content_hash 疑似提示（用户决定导入/跳过）；部分唯一索引并发安全网；merge/资产 SHA-256/近似时间留 R10+
+- provenance 语义：导入初始修订 `source=import`（initialEnrichmentRevision 参数化）；补全修订 `source=ai`；前端记忆流已有 import 标签/图标
+- 行级事务隔离：Commit 每行独立 `store.BeginTx`，失败行标 failed 不影响其他行（标准 1）
+- 地点/时间缺失保持 unknown：不伪装导入时间、不猜测坐标（标准 6）；地点字段只解析校验不落库（captures 无列）
+- 单条导入 AI 补全免费获得：提交后跳 `/memories/$captureId`，R8 补全面板直接可用（无需新端点）
+- 解析/补全/Commit 三阶段独立：补全失败单行记 error，其他行照常；「按原样导入」默认可用（标准 4）
+
+### 验证
+- [x] `go build ./...` / `go vet ./...` 通过
+- [x] `go test ./...`（无 env）**337** 全绿（R8 301 → +36）
+- [x] `WEAVEBRAIN_TEST_DATABASE_URL=... go test ./...`（真实 PG）**356** 全绿（R8 308 → +48）—— 迁移 000001—000014 + import 仓储/服务集成 + R3/R4/R7 既有集成回归全部实际运行；000014 down/up 可逆（Down 先重映射 import 修订 → user 再收紧 CHECK）
+- [x] `dart analyze lib test` 0 issue；`flutter test` **184** 全绿（R8 144 → +40）
+
+### 报告
+- [x] docs/round-reports/R09_REPORT.md
+- [x] docs/API_V3_CONTRACT.md §12（导入接口：去重模型 / 单条 kind=import / 8 批量端点 / 数据模型 / 错误映射 / 自动化证据）
+- [x] docs/DEVELOPMENT_GOALS.md G7（5 步 + 7 完成条件全部勾选；顶层表 G7 → R9 完成）
+
+### 已知限制
+- 1 千行以上分批/流式 Commit 留后续（MVP 单次 8 MiB body + 1000 短事务）；两段上传预留
+- 地点/坐标只解析校验不落库（captures 无列，R10+ 落库）
+- 迁移 000014 Down 会先把 `source='import'` 修订重映射为 `user`（回滚可逆）；`flutter analyze` 本机崩溃沿用 `dart analyze` 替代
+- 真机 / E2E（Ollama smoke）待验证
+
+### 下一步
+- 合并 R9（合并提交）
+- G8 / R10：Web 回顾端、同步与工作流预留

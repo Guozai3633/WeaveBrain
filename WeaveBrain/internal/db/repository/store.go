@@ -26,6 +26,8 @@ type DBStore struct {
 	Outbox        OutboxRepository
 	Timeline      TimelineRepository
 	Memory        MemoryRepository
+	Completion    CompletionRepository
+	Import        ImportRepository
 }
 
 func NewFromPool(pool *pgxpool.Pool) *DBStore {
@@ -48,6 +50,8 @@ func NewFromPool(pool *pgxpool.Pool) *DBStore {
 		Outbox:        NewOutboxRepository(conn),
 		Timeline:      NewTimelineRepository(conn),
 		Memory:        NewMemoryRepository(conn),
+		Completion:    NewCompletionRepository(conn),
+		Import:        NewImportRepository(conn),
 	}
 }
 
@@ -78,6 +82,8 @@ func (s *DBStore) BeginTx(ctx context.Context) (context.Context, *DBStore, func(
 		Outbox:        NewOutboxRepository(conn),
 		Timeline:      NewTimelineRepository(conn),
 		Memory:        NewMemoryRepository(conn),
+		Completion:    NewCompletionRepository(conn),
+		Import:        NewImportRepository(conn),
 	}
 
 	commitFn := func(commit bool) error {

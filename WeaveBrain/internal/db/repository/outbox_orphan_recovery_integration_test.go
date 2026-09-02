@@ -30,14 +30,10 @@ func TestOutboxOrphanRecoveryIntegration(t *testing.T) {
 		t.Fatalf("ping test database: %v", err)
 	}
 
-	// ClaimDue is global (no user scope) and orders by (next_run_at, id), so
-	// rows left behind by other integration tests in this shared test database
-	// would be claimed first and starve this test's seeded rows. Clear the
-	// outbox table before seeding so ClaimDue operates on a known set.
-	if _, err := pool.Exec(ctx, "DELETE FROM capture_outbox"); err != nil {
-		t.Fatalf("clean capture_outbox: %v", err)
-	}
-
+	// ClaimDue is global (no user scope), so it can claim rows left behind by
+	// other integration tests sharing this database. Scope our own cleanup to
+	// this test's user so we never wipe a concurrent package's rows, and bump
+	// the claim limit below so other tests' stray due rows cannot starve ours.
 	userID := uuid.New()
 	if _, err := pool.Exec(
 		ctx,
@@ -45,6 +41,13 @@ func TestOutboxOrphanRecoveryIntegration(t *testing.T) {
 		userID,
 	); err != nil {
 		t.Fatalf("seed user: %v", err)
+	}
+	if _, err := pool.Exec(
+		ctx,
+		"DELETE FROM capture_outbox WHERE user_id = $1",
+		userID,
+	); err != nil {
+		t.Fatalf("clean capture_outbox: %v", err)
 	}
 
 	// One capture satisfies the FK for all outbox rows (the FK is on
@@ -84,7 +87,9 @@ func TestOutboxOrphanRecoveryIntegration(t *testing.T) {
 	queuedID := seed("orphan.queued", "queued", 0, now.Add(-1*time.Minute), now)
 
 	repo := NewOutboxRepository(NewPgConn(pool))
-	claimed, err := repo.ClaimDue(ctx, 10, 5*time.Minute)
+	// Claim generously: with a shared database other tests may have left a few
+	// stray due rows, but they must not starve our own three seeded rows.
+	claimed, err := repo.ClaimDue(ctx, 1000, 5*time.Minute)
 	if err != nil {
 		t.Fatalf("ClaimDue: %v", err)
 	}

@@ -103,6 +103,14 @@ func (r *workerCaptureRepo) UpdateCardTitle(context.Context, uuid.UUID, uuid.UUI
 	panic("not used in worker test")
 }
 
+func (r *workerCaptureRepo) FindExternalDuplicate(context.Context, uuid.UUID, string, string, uuid.UUID) (*uuid.UUID, error) {
+	panic("not used in worker test")
+}
+
+func (r *workerCaptureRepo) FindContentHashMatch(context.Context, uuid.UUID, string, uuid.UUID) (*uuid.UUID, error) {
+	panic("not used in worker test")
+}
+
 type countingPipeline struct {
 	mu          sync.Mutex
 	organize    int

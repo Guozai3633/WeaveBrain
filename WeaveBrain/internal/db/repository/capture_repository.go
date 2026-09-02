@@ -60,9 +60,12 @@ func (r *captureRepository) Create(
 				collection_id,
 				privacy_mode,
 				request_hash,
-				client_version
+				client_version,
+				external_id,
+				source_name,
+				content_hash
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 			ON CONFLICT (user_id, id) DO NOTHING
 			RETURNING id, user_id, kind, source, privacy_mode
 		),
@@ -79,7 +82,7 @@ func (r *captureRepository) Create(
 				processing_status,
 				version
 			)
-			SELECT $13, user_id, id, $14, $15, $16, $17::jsonb, $18::jsonb, $19, $20
+			SELECT $16, user_id, id, $17, $18, $19, $20::jsonb, $21::jsonb, $22, $23
 			FROM inserted_capture
 			RETURNING id
 		),
@@ -94,7 +97,7 @@ func (r *captureRepository) Create(
 				changes,
 				provenance
 			)
-			SELECT user_id, id, 1, 1, 'fallback', 1, $21::jsonb, $22::jsonb
+			SELECT user_id, id, 1, 1, $27, 1, $24::jsonb, $25::jsonb
 			FROM inserted_capture
 			RETURNING id
 		),
@@ -117,7 +120,7 @@ func (r *captureRepository) Create(
 					'source', source,
 					'privacy_mode', privacy_mode
 				),
-				$23::jsonb
+				$26::jsonb
 			FROM inserted_capture
 			RETURNING id
 		)
@@ -140,6 +143,9 @@ func (r *captureRepository) Create(
 		capture.PrivacyMode,
 		capture.RequestHash,
 		capture.ClientVersion,
+		capture.ExternalID,
+		capture.SourceName,
+		capture.ContentHash,
 		card.ID,
 		card.PrimaryType,
 		card.Title,
@@ -151,6 +157,7 @@ func (r *captureRepository) Create(
 		changesJSON,
 		provenanceJSON,
 		policyJSON,
+		string(rev.Source),
 	).Scan(&insertedID)
 	if err == nil {
 		return false, nil
@@ -189,6 +196,9 @@ func (r *captureRepository) GetByID(
 			c.privacy_mode,
 			c.request_hash,
 			c.client_version,
+			c.external_id,
+			c.source_name,
+			c.content_hash,
 			c.version,
 			c.lifecycle_status,
 			c.created_at,
@@ -234,6 +244,9 @@ func (r *captureRepository) GetByID(
 		&capture.PrivacyMode,
 		&capture.RequestHash,
 		&capture.ClientVersion,
+		&capture.ExternalID,
+		&capture.SourceName,
+		&capture.ContentHash,
 		&capture.Version,
 		&capture.LifecycleStatus,
 		&capture.CreatedAt,
@@ -292,4 +305,57 @@ func (r *captureRepository) UpdateCardTitle(
 		return ErrCaptureNotFound
 	}
 	return nil
+}
+
+func (r *captureRepository) FindExternalDuplicate(
+	ctx context.Context,
+	userID uuid.UUID,
+	sourceName, externalID string,
+	excludeCaptureID uuid.UUID,
+) (*uuid.UUID, error) {
+	const query = `
+		SELECT id
+		FROM captures
+		WHERE user_id = $1
+		  AND source_name = $2
+		  AND external_id = $3
+		  AND id <> $4
+		  AND deleted_at IS NULL
+		LIMIT 1
+	`
+	var id uuid.UUID
+	err := r.db.QueryRow(ctx, query, userID, sourceName, externalID, excludeCaptureID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find external duplicate: %w", err)
+	}
+	return &id, nil
+}
+
+func (r *captureRepository) FindContentHashMatch(
+	ctx context.Context,
+	userID uuid.UUID,
+	contentHash string,
+	excludeCaptureID uuid.UUID,
+) (*uuid.UUID, error) {
+	const query = `
+		SELECT id
+		FROM captures
+		WHERE user_id = $1
+		  AND content_hash = $2
+		  AND id <> $3
+		  AND deleted_at IS NULL
+		LIMIT 1
+	`
+	var id uuid.UUID
+	err := r.db.QueryRow(ctx, query, userID, contentHash, excludeCaptureID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find content hash duplicate: %w", err)
+	}
+	return &id, nil
 }

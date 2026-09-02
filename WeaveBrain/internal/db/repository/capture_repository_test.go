@@ -134,20 +134,23 @@ func TestCaptureRepositoryCreateUsesAtomicAggregateCTE(t *testing.T) {
 	if replayed {
 		t.Fatal("first insert must not be marked as replay")
 	}
-	if len(conn.args) != 23 {
-		t.Fatalf("expected 23 bound arguments, got %d", len(conn.args))
+	if len(conn.args) != 27 {
+		t.Fatalf("expected 27 bound arguments, got %d", len(conn.args))
 	}
-	if conn.args[0] != userID || conn.args[1] != captureID || conn.args[12] != cardID {
+	if conn.args[0] != userID || conn.args[1] != captureID || conn.args[15] != cardID {
 		t.Fatalf("unexpected ownership/id arguments: %#v", conn.args)
 	}
-	if len(conn.args[22].([]byte)) == 0 {
-		t.Fatal("expected policy snapshot to be bound as the 23rd argument")
+	if len(conn.args[25].([]byte)) == 0 {
+		t.Fatal("expected policy snapshot to be bound as the 26th argument")
 	}
-	if !strings.Contains(string(conn.args[22].([]byte)), "true") {
-		t.Fatalf("expected ai_memory_enabled=true in the policy snapshot json, got %s", conn.args[22])
+	if !strings.Contains(string(conn.args[25].([]byte)), "true") {
+		t.Fatalf("expected ai_memory_enabled=true in the policy snapshot json, got %s", conn.args[25])
 	}
-	if !strings.Contains(string(conn.args[20].([]byte)), `"title"`) {
-		t.Fatalf("expected fallback revision changes to be bound, got %s", conn.args[20])
+	if !strings.Contains(string(conn.args[23].([]byte)), `"title"`) {
+		t.Fatalf("expected fallback revision changes to be bound, got %s", conn.args[23])
+	}
+	if conn.args[26] != "fallback" {
+		t.Fatalf("expected revision source fallback as the 27th argument, got %#v", conn.args[26])
 	}
 
 	normalizedSQL := strings.Join(strings.Fields(conn.query), " ")
@@ -157,11 +160,11 @@ func TestCaptureRepositoryCreateUsesAtomicAggregateCTE(t *testing.T) {
 		"ON CONFLICT (user_id, id) DO NOTHING",
 		"INSERT INTO memory_cards",
 		"INSERT INTO memory_card_revisions",
-		"'fallback'",
+		"$27",
 		"INSERT INTO capture_outbox",
 		"'capture.created'",
 		"policy_snapshot",
-		"$23::jsonb",
+		"$26::jsonb",
 		"'privacy_mode', privacy_mode",
 	}
 	for _, check := range checks {

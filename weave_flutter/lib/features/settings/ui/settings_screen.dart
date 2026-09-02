@@ -77,6 +77,16 @@ class SettingsScreen extends ConsumerWidget {
         ),
         const Divider(),
 
+        // --- Import Old Memories ---
+        ListTile(
+          leading: const Icon(Icons.file_download_outlined),
+          title: const Text('导入旧记忆'),
+          subtitle: const Text('从文本/CSV/JSONL 批量导入'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/imports'),
+        ),
+        const Divider(),
+
         // --- Project Management ---
         ListTile(
           leading: const Icon(Icons.folder_outlined),

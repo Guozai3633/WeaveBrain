@@ -16,8 +16,8 @@
 | G3 | AI 总开关与后台任务 | R5 | R5 完成（后端 143 测试 + 前端 65 测试绿；真机/E2E 待验证） |
 | G4 | 记忆卡、记忆流与详情 | R6 | R6 完成（后端 227 测试 + 前端 113 测试绿；真机/E2E 待验证） |
 | G5 | 验收 B：核心捕捉与 AI 控制 | R7 | R7 完成（后端 242 测试含真实 PG 集成全绿；20 样本人工验收待回填） |
-| G6 | AI 补全 | R8 | 未开始 |
-| G7 | 单条与批量导入 | R9 | 未开始 |
+| G6 | AI 补全 | R8 | R8 完成（后端 308 测试含真实 PG 集成全绿 + 前端 144 全绿；真机/E2E 待验证） |
+| G7 | 单条与批量导入 | R9 | R9 完成（后端 337 无 env + 356 真实 PG 集成全绿 + 前端 184 全绿） |
 | G8 | Web 回顾端、同步与工作流预留 | R10 | 未开始 |
 | G9 | 移动快捷入口与一种回响 | R11 | 未开始 |
 | G10 | 验收 C：MVP 功能完整性 | R12 | 未开始 |
@@ -183,40 +183,40 @@
 ## G6 AI 补全（R8）
 
 ### 步骤清单
-- [ ] CompletionProposal / FieldProposal 模型
-- [ ] completion:preview / completion:apply
-- [ ] evidence_spans、safe_auto/suggest_only/forbidden
-- [ ] 逐字段采用、全部采用安全字段、版本与撤销
-- [ ] 详情页补全入口、旧提案过期
+- [x] CompletionProposal / FieldProposal 模型 —— 迁移 000013 + internal/entity/completion.go（ProposalStatus / ApplyPolicy / Provenance / EvidenceSpan / CompletionProposal / PreviewResult / ApplyResult）
+- [x] completion:preview / completion:apply —— POST /captures/:captureId/completion/{preview,apply,undo}（preview 不改业务对象；apply 幂等 + 版本安全；undo 完整撤销）
+- [x] evidence_spans、safe_auto/suggest_only/forbidden —— evidence_spans JSONB（字节偏移 + 逐字引文）；5 个目标字段有证据→safe_auto / 无证据→suggest_only / 其他→forbidden；前端「AI 建议 / 需确认」chip
+- [x] 逐字段采用、全部采用安全字段、版本与撤销 —— 面板「全部采用安全字段」批量 + 逐字段「采用」+「撤销上次补全」；source_revision 冲突 → 提案过期 + 409
+- [x] 详情页补全入口、旧提案过期 —— memory_detail_screen 接入 CompletionPanel（AI 补全开启且卡片 ready 才展示）；新 preview 使该 capture 全部 pending 过期
 
 ### 完成条件
-- [ ] preview 不修改业务对象
-- [ ] apply 默认只填空字段
-- [ ] 用户值和导入原值受保护
-- [ ] 事实型建议有证据片段
-- [ ] source_revision 变化后旧提案不可应用
-- [ ] 应用后可以撤销
-- [ ] AI 补全关闭时不展示或调用入口
+- [x] preview 不修改业务对象 —— CompletionService.Preview 对 capture/card 零改动；服务测试断言
+- [x] apply 默认只填空字段 —— fieldEmpty 判定（primary_type=uncategorized 视为缺失），非空跳过（服务测试）
+- [x] 用户值和导入原值受保护 —— apply 非空字段提案置 rejected 绝不覆盖；undo 只回滚「当前值仍==AI 所设」字段（服务测试）
+- [x] 事实型建议有证据片段 —— buildEvidenceSpans 逐字定位原文首现字节偏移；无证据降级 suggest_only（服务测试 + 前端证据 chip）
+- [x] source_revision 变化后旧提案不可应用 —— pending 提案 SourceRevision != card.Version → MarkExpired + ErrCompletionVersionConflict（409）（服务测试）
+- [x] 应用后可以撤销 —— undo 端点回滚最近一次 ai 补全 revision（source=user 撤销修订，提案保持 accepted 审计留痕）（服务测试 + 前端 undo）
+- [x] AI 补全关闭时不展示或调用入口 —— preview 门控 AICompletion && CloudTextAllowed；前端 _aiCompletionAvailable 未开启/未 ready 渲染 SizedBox.shrink() 零调用（widget 测试）
 
 ---
 
 ## G7 单条与批量导入（R9）
 
 ### 步骤清单
-- [ ] 单条文字/音频/文件导入
-- [ ] 多段文本、TXT、Markdown、CSV、JSONL 解析
-- [ ] 字段映射、前 10 条预览
-- [ ] AI 补全缺失项、去重、Commit、行级错误隔离
-- [ ] 结果报告与错误报告下载
+- [x] 单条文字/音频/文件导入 —— 单条复用 `POST /captures` kind=import（external_id/source_name/title/tags/primary_type 透传 + 去重 + content_hash 疑似提示）；批量文件选择（IO readAsString / Web FileReader）
+- [x] 多段文本、TXT、Markdown、CSV、JSONL 解析 —— `import_parser.go` plainTextParser / csvParser / jsonlParser；txt/markdown/md 归一化 plain_text
+- [x] 字段映射、前 10 条预览 —— GetPreview limit=10/offset=0 + column_mapping + 校验错误/疑似重复 chip
+- [x] AI 补全缺失项、去重、Commit、行级错误隔离 —— completion:preview/apply 复用 R8 FieldProposalGenerator；去重 = external_id 精确硬跳过 + content_hash 疑似；Commit 每行独立短事务
+- [x] 结果报告与错误报告下载 —— 结果页统计 + 错误报告（JSON / CSV 下载，IO 复制 / Web Blob）
 
 ### 完成条件
-- [ ] 单行错误不影响其他行
-- [ ] 1 千行 MVP 导入稳定
-- [ ] 重复 Commit 不产生重复 Capture
-- [ ] 补全失败可按原样导入
-- [ ] Commit 前展示字段映射、错误和疑似重复
-- [ ] 地点/时间缺失时保持 unknown
-- [ ] 可下载错误报告
+- [x] 单行错误不影响其他行 —— Commit 每行独立事务，失败行标 `failed` 其他行照常（服务测试）
+- [x] 1 千行 MVP 导入稳定 —— 单事务建 job + rows（预计算去重），8 MiB body 预算，1000 短事务 MVP 可接受
+- [x] 重复 Commit 不产生重复 Capture —— capture_id=row.id 确定性 + Capture CTE `ON CONFLICT (user_id,id) DO NOTHING` + imported 行快进（服务测试幂等）
+- [x] 补全失败可按原样导入 —— completion/preview 单行 LLM 失败记 error 不阻塞；Commit 按原样导入（服务测试）
+- [x] Commit 前展示字段映射、错误和疑似重复 —— 前端预览表格 + 去重 chip（重复·跳过 / 疑似重复 / 待补充）+ 校验错误
+- [x] 地点/时间缺失时保持 unknown —— captured_at/地点缺失不伪装导入时间、不猜测坐标；落库保持 unknown（服务测试）
+- [x] 可下载错误报告 —— GET error-report?format=csv（text/csv + attachment）与 JSON；前端 Web 下载 CSV / IO 复制
 
 ---
 

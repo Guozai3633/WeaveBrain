@@ -21,7 +21,20 @@ var (
 	ErrInvalidCapture             = errors.New("invalid capture")
 	ErrCaptureNotFound            = errors.New("capture not found")
 	ErrCaptureIdempotencyConflict = errors.New("capture idempotency conflict")
+	ErrDuplicateExternalID        = errors.New("external_id already imported")
 )
+
+// DuplicateExternalIDError carries the existing capture id so the API can return
+// it to the client. errors.Is(err, ErrDuplicateExternalID) matches the sentinel.
+type DuplicateExternalIDError struct {
+	ExistingCaptureID uuid.UUID
+}
+
+func (e *DuplicateExternalIDError) Error() string {
+	return fmt.Sprintf("%v: %s", ErrDuplicateExternalID, e.ExistingCaptureID)
+}
+
+func (e *DuplicateExternalIDError) Unwrap() error { return ErrDuplicateExternalID }
 
 const (
 	fallbackTitleMaxRunes   = 30
@@ -40,11 +53,23 @@ type CreateCaptureInput struct {
 	CollectionID        *int64
 	PrivacyMode         string
 	ClientVersion       int
+	// ExternalID/SourceName are the import dedup key (single import). Both must
+	// be set together; exact (source_name, external_id) reuse is rejected.
+	ExternalID *string
+	SourceName *string
+	// TitleOverride/PrimaryTypeOverride/TagsOverride let an importer supply the
+	// card's initial values (provenance=import) instead of the fallback title.
+	TitleOverride      *string
+	PrimaryTypeOverride *string
+	TagsOverride       []string
 }
 
 type CreateCaptureResult struct {
 	Aggregate *entity.CaptureAggregate
 	Replayed  bool
+	// Dedupe is non-nil for a single import whose content hash matches an
+	// existing capture: the import still proceeds, the client decides.
+	Dedupe *entity.CaptureDedupe
 }
 
 // AISettingsSnapshotSource resolves the user's current AI consent switches so
@@ -99,26 +124,74 @@ func (s *CaptureService) Create(
 		Source:              normalized.Source,
 		CollectionID:        normalized.CollectionID,
 		PrivacyMode:         normalized.PrivacyMode,
+		ExternalID:          normalized.ExternalID,
+		SourceName:          normalized.SourceName,
 		RequestHash:         requestHash,
 		ClientVersion:       normalized.ClientVersion,
 	}
+
+	// Single-import dedup: exact (source_name, external_id) is a hard reject
+	// (excluding the same capture on an idempotent retry); a content-hash match
+	// is a soft "suspected duplicate" the client decides about.
+	if normalized.Kind == entity.CaptureKindImport &&
+		normalized.ExternalID != nil && *normalized.ExternalID != "" &&
+		normalized.SourceName != nil && *normalized.SourceName != "" {
+		existingID, err := s.repository.FindExternalDuplicate(
+			ctx, userID, *normalized.SourceName, *normalized.ExternalID, normalized.ID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("check external duplicate: %w", err)
+		}
+		if existingID != nil {
+			return nil, &DuplicateExternalIDError{ExistingCaptureID: *existingID}
+		}
+	}
+	var dedupe *entity.CaptureDedupe
+	if normalized.Kind == entity.CaptureKindImport {
+		hash := normalizeAndHashContent(normalized.Text)
+		capture.ContentHash = &hash
+		if hash != "" {
+			existingID, err := s.repository.FindContentHashMatch(ctx, userID, hash, normalized.ID)
+			if err != nil {
+				return nil, fmt.Errorf("check content hash duplicate: %w", err)
+			}
+			if existingID != nil {
+				dedupe = &entity.CaptureDedupe{
+					Status:            "suggested",
+					ExistingCaptureID: existingID,
+				}
+			}
+		}
+	}
+
 	title := fallbackTitle(normalized.Text)
 	if title == "" {
 		title = "语音记录"
+	}
+	if normalized.TitleOverride != nil && strings.TrimSpace(*normalized.TitleOverride) != "" {
+		title = strings.TrimSpace(*normalized.TitleOverride)
+	}
+	primaryType := "uncategorized"
+	if normalized.PrimaryTypeOverride != nil && strings.TrimSpace(*normalized.PrimaryTypeOverride) != "" {
+		primaryType = *normalized.PrimaryTypeOverride
+	}
+	tags := []string{}
+	if normalized.TagsOverride != nil {
+		tags = normalized.TagsOverride
 	}
 	card := &entity.MemoryCard{
 		ID:               uuid.New(),
 		UserID:           userID,
 		CaptureID:        normalized.ID,
-		PrimaryType:      "uncategorized",
+		PrimaryType:      primaryType,
 		Title:            title,
 		Summary:          fallbackSummary(normalized.Text),
-		Tags:             []string{},
+		Tags:             tags,
 		KeyPoints:        []string{},
 		ProcessingStatus: "ready",
 		Version:          1,
 	}
-	revision := fallbackEnrichmentRevision(userID, normalized.ID, title, card.Summary)
+	revision := initialEnrichmentRevision(userID, normalized.ID, title, card.Summary, revisionSourceForKind(normalized.Kind))
 
 	replayed, err := s.repository.Create(ctx, capture, card, revision, s.resolvePolicySnapshot(ctx, userID))
 	if errors.Is(err, repository.ErrCaptureIdempotencyConflict) {
@@ -133,7 +206,7 @@ func (s *CaptureService) Create(
 		return nil, mapCaptureRepositoryError("load created capture", err)
 	}
 
-	return &CreateCaptureResult{Aggregate: aggregate, Replayed: replayed}, nil
+	return &CreateCaptureResult{Aggregate: aggregate, Replayed: replayed, Dedupe: dedupe}, nil
 }
 
 // resolvePolicySnapshot reads the user's AI consent switches at capture time.
@@ -199,8 +272,32 @@ func normalizeCreateCaptureInput(
 		if !utf8.ValidString(input.Text) {
 			return input, fmt.Errorf("%w: text must be valid UTF-8", ErrInvalidCapture)
 		}
+	case entity.CaptureKindImport:
+		// Single import reuses the capture pipeline: content is required, just
+		// like a text capture. external_id/source_name form the dedup key.
+		if strings.TrimSpace(input.Text) == "" {
+			return input, fmt.Errorf("%w: import text must not be empty", ErrInvalidCapture)
+		}
+		if !utf8.ValidString(input.Text) {
+			return input, fmt.Errorf("%w: import text must be valid UTF-8", ErrInvalidCapture)
+		}
+		if utf8.RuneCountInString(input.Text) > MaxCaptureTextRunes {
+			return input, fmt.Errorf("%w: import text exceeds %d characters", ErrInvalidCapture, MaxCaptureTextRunes)
+		}
+		if input.ExternalID != nil {
+			if utf8.RuneCountInString(*input.ExternalID) > 200 {
+				return input, fmt.Errorf("%w: external_id exceeds 200 characters", ErrInvalidCapture)
+			}
+			input.ExternalID = trimStringPtr(input.ExternalID)
+		}
+		if input.SourceName != nil {
+			if utf8.RuneCountInString(*input.SourceName) > 100 {
+				return input, fmt.Errorf("%w: source_name exceeds 100 characters", ErrInvalidCapture)
+			}
+			input.SourceName = trimStringPtr(input.SourceName)
+		}
 	default:
-		return input, fmt.Errorf("%w: only text and audio captures are supported", ErrInvalidCapture)
+		return input, fmt.Errorf("%w: only text, audio and import captures are supported", ErrInvalidCapture)
 	}
 
 	if input.CapturedAtPrecision == "" {
@@ -212,7 +309,11 @@ func normalizeCreateCaptureInput(
 		return input, fmt.Errorf("%w: invalid captured_at_precision", ErrInvalidCapture)
 	}
 	if input.Source == "" {
-		input.Source = "api"
+		if input.Kind == entity.CaptureKindImport {
+			input.Source = "import"
+		} else {
+			input.Source = "api"
+		}
 	}
 	if input.PrivacyMode == "" {
 		input.PrivacyMode = "cloud_allowed"
@@ -251,14 +352,52 @@ func hashCaptureRequest(input CreateCaptureInput) (string, error) {
 		CollectionID        *int64             `json:"collection_id"`
 		PrivacyMode         string             `json:"privacy_mode"`
 		ClientVersion       int                `json:"client_version"`
+		ExternalID          *string            `json:"external_id"`
+		SourceName          *string            `json:"source_name"`
 	}
 
-	payload, err := json.Marshal(canonicalCaptureRequest(input))
+	payload, err := json.Marshal(canonicalCaptureRequest{
+		ID:                  input.ID,
+		Kind:                input.Kind,
+		Text:                input.Text,
+		CapturedAt:          input.CapturedAt,
+		CapturedAtPrecision: input.CapturedAtPrecision,
+		Timezone:            input.Timezone,
+		Source:              input.Source,
+		CollectionID:        input.CollectionID,
+		PrivacyMode:         input.PrivacyMode,
+		ClientVersion:       input.ClientVersion,
+		ExternalID:          input.ExternalID,
+		SourceName:          input.SourceName,
+	})
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// normalizeAndHashContent collapses whitespace in the text and returns its
+// SHA-256 hex digest. Used as the content-level "suspected duplicate" key.
+func normalizeAndHashContent(text string) string {
+	normalized := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	if normalized == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(sum[:])
+}
+
+// trimStringPtr trims surrounding whitespace and returns nil when empty.
+func trimStringPtr(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*s)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func fallbackTitle(text string) string {
@@ -288,10 +427,11 @@ func fallbackSummary(text string) *string {
 	return &summary
 }
 
-// fallbackEnrichmentRevision is the initial revision recorded atomically at
+// initialEnrichmentRevision is the initial revision recorded atomically at
 // capture creation. It documents that the card's AI-claimed fields were derived
-// locally (source=fallback) from the raw capture, before any AI pipeline exists.
-func fallbackEnrichmentRevision(userID uuid.UUID, captureID uuid.UUID, title string, summary *string) *entity.EnrichmentRevision {
+// locally (source=fallback for text/audio, source=import for imports) from the
+// raw capture, before any AI pipeline exists.
+func initialEnrichmentRevision(userID uuid.UUID, captureID uuid.UUID, title string, summary *string, source entity.EnrichmentSource) *entity.EnrichmentRevision {
 	changes := map[string]any{
 		"title":        title,
 		"primary_type": "uncategorized",
@@ -305,11 +445,19 @@ func fallbackEnrichmentRevision(userID uuid.UUID, captureID uuid.UUID, title str
 		UserID:         userID,
 		CaptureID:      captureID,
 		CardVersion:    1,
-		Source:         entity.EnrichmentSourceFallback,
+		Source:         source,
 		SourceRevision: 1,
 		Changes:        changes,
-		Provenance:     map[string]any{"source": "fallback"},
+		Provenance:     map[string]any{"source": string(source)},
 	}
+}
+
+// revisionSourceForKind picks the initial revision source for a capture kind.
+func revisionSourceForKind(kind entity.CaptureKind) entity.EnrichmentSource {
+	if kind == entity.CaptureKindImport {
+		return entity.EnrichmentSourceImport
+	}
+	return entity.EnrichmentSourceFallback
 }
 
 func mapCaptureRepositoryError(operation string, err error) error {

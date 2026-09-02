@@ -87,6 +87,16 @@ func (s *Server) setupRoutes() {
 			memoryHandler := NewMemoryHandler(s.services.Memory)
 			memoryHandler.RegisterRoutes(protectedV3)
 		}
+
+		if s.services.Completion != nil {
+			completionHandler := NewCompletionHandler(s.services.Completion)
+			completionHandler.RegisterRoutes(protectedV3)
+		}
+
+		if s.services.Import != nil {
+			importHandler := NewImportHandler(s.services.Import)
+			importHandler.RegisterRoutes(protectedV3)
+		}
 	}
 
 	// Public routes (no auth required)

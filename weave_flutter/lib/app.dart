@@ -10,6 +10,7 @@ import '../features/capture/ui/transcript_edit_screen.dart';
 import '../features/echo/ui/echo_screen.dart';
 import '../features/ideas/ui/idea_detail_screen.dart';
 import '../features/ideas/ui/ideas_screen.dart';
+import '../features/imports/ui/import_screen.dart';
 import '../features/memories/ui/memory_detail_screen.dart';
 import '../features/memories/ui/memory_list_screen.dart';
 import '../features/projects/ui/project_list_screen.dart';
@@ -98,6 +99,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           }
           return MemoryDetailScreen(captureId: captureId);
         },
+      ),
+      GoRoute(
+        path: '/imports',
+        builder: (context, state) => const ImportScreen(),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, shell) => AppScaffold(navigationShell: shell),

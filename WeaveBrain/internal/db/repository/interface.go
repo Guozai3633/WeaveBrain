@@ -71,6 +71,25 @@ type CaptureRepository interface {
 	// UpdateCardTitle updates the fallback MemoryCard title for a Capture.
 	// Used when an STT/user transcript becomes available for an audio Capture.
 	UpdateCardTitle(ctx context.Context, userID uuid.UUID, captureID uuid.UUID, title string) error
+	// FindExternalDuplicate returns the id of a non-deleted capture sharing the
+	// exact (user_id, source_name, external_id) import dedup key, excluding the
+	// given capture (an idempotent retry of the same capture is not a duplicate).
+	// Returns nil when no other capture matches.
+	FindExternalDuplicate(
+		ctx context.Context,
+		userID uuid.UUID,
+		sourceName, externalID string,
+		excludeCaptureID uuid.UUID,
+	) (*uuid.UUID, error)
+	// FindContentHashMatch returns the id of the first non-deleted capture whose
+	// normalized content hash equals the given hash, excluding the given
+	// capture. Returns nil when no other capture matches.
+	FindContentHashMatch(
+		ctx context.Context,
+		userID uuid.UUID,
+		contentHash string,
+		excludeCaptureID uuid.UUID,
+	) (*uuid.UUID, error)
 }
 
 // MemoryRepository persists the memory stream and its revision trail.
@@ -221,4 +240,65 @@ type OutboxRepository interface {
 	// organizing disabled, stamping them with the current policy snapshot so
 	// the worker enriches them. It returns the number of events re-enqueued.
 	ReorganizeByUser(ctx context.Context, userID uuid.UUID, policyJSON []byte) (int64, error)
+}
+
+// ImportRepository persists batch import jobs and their rows. Rows reference
+// captures via a nullable capture_id once committed. CreateJob inserts the job
+// and its rows atomically in one transaction.
+type ImportRepository interface {
+	// CreateJob atomically inserts a draft job plus its rows.
+	CreateJob(ctx context.Context, job *entity.ImportJob, rows []*entity.ImportRow) error
+	// GetJob returns one job owned by the user, or ErrImportNotFound.
+	GetJob(ctx context.Context, userID uuid.UUID, jobID uuid.UUID) (*entity.ImportJob, error)
+	// ListRows returns one page of rows ordered by row_number.
+	ListRows(ctx context.Context, userID uuid.UUID, jobID uuid.UUID, limit, offset int) ([]*entity.ImportRow, error)
+	// GetRowsByNumbers returns the given rows (by row_number) of a job.
+	GetRowsByNumbers(ctx context.Context, userID uuid.UUID, jobID uuid.UUID, rowNumbers []int) ([]*entity.ImportRow, error)
+	// UpdateJob persists a job's status, counts and commit/cancel timestamps.
+	UpdateJob(ctx context.Context, job *entity.ImportJob) error
+	// UpdateRow persists a row's mutable fields (status, dedupe, capture_id,
+	// normalized payload, validation errors, content, content_hash).
+	UpdateRow(ctx context.Context, row *entity.ImportRow) error
+	// SetRowCompletion persists the AI field proposals for a row.
+	SetRowCompletion(ctx context.Context, userID uuid.UUID, rowID uuid.UUID, proposals []entity.ImportFieldProposal) error
+	// MarkRowState transitions a row to a terminal state, optionally recording
+	// the created capture id and the imported timestamp.
+	MarkRowState(ctx context.Context, userID uuid.UUID, rowID uuid.UUID, status entity.ImportRowStatus, captureID *uuid.UUID, importedAt *time.Time) error
+	// FindExternalDuplicates returns the external_ids of non-deleted captures
+	// matching any of the exact (source_name, external_id) dedup keys for the
+	// user. Returning the keys (not capture ids) lets the caller mark exactly
+	// which import rows are hard duplicates.
+	FindExternalDuplicates(ctx context.Context, userID uuid.UUID, sourceName string, externalIDs []string) ([]string, error)
+	// FindContentHashMatches returns the normalized content hashes of
+	// non-deleted captures matching any of the given hashes for the user.
+	FindContentHashMatches(ctx context.Context, userID uuid.UUID, hashes []string) ([]string, error)
+}
+
+// CompletionRepository persists AI field-completion proposals. One row is one
+// FIELD suggestion for a Capture's MemoryCard; a preview batch shares PreviewID.
+type CompletionRepository interface {
+	// CreateProposals inserts a batch of field proposals for a capture,
+	// stamping user_id/capture_id and returning the assigned ids and timestamps.
+	CreateProposals(
+		ctx context.Context,
+		userID uuid.UUID,
+		captureID uuid.UUID,
+		proposals []*entity.CompletionProposal,
+	) error
+	// ListPendingByCapture returns a capture's proposals still in pending.
+	ListPendingByCapture(ctx context.Context, userID uuid.UUID, captureID uuid.UUID) ([]*entity.CompletionProposal, error)
+	// ListByIDs returns the given proposals for a user, any status.
+	ListByIDs(ctx context.Context, userID uuid.UUID, ids []uuid.UUID) ([]*entity.CompletionProposal, error)
+	// ExpireAllPending expires every pending proposal for a capture. Used when a
+	// new preview supersedes the previous batch (only one active set survives).
+	ExpireAllPending(ctx context.Context, userID uuid.UUID, captureID uuid.UUID) error
+	// MarkAccepted transitions pending proposals to accepted, recording who
+	// accepted and when. Rows not in pending are left untouched (idempotent).
+	MarkAccepted(ctx context.Context, userID uuid.UUID, ids []uuid.UUID) error
+	// MarkRejected transitions pending proposals to rejected (a no-op when the
+	// field became non-empty before apply, or the user declined).
+	MarkRejected(ctx context.Context, userID uuid.UUID, ids []uuid.UUID) error
+	// MarkExpired transitions pending proposals to expired (stale after a
+	// source_revision change or a newer preview).
+	MarkExpired(ctx context.Context, userID uuid.UUID, ids []uuid.UUID) error
 }

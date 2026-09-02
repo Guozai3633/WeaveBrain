@@ -101,6 +101,50 @@ func (r *memoryCaptureRepository) UpdateCardTitle(
 	return nil
 }
 
+func (r *memoryCaptureRepository) FindExternalDuplicate(
+	_ context.Context,
+	userID uuid.UUID,
+	sourceName, externalID string,
+	excludeCaptureID uuid.UUID,
+) (*uuid.UUID, error) {
+	for key, agg := range r.items {
+		if key.userID != userID || key.captureID == excludeCaptureID {
+			continue
+		}
+		c := agg.Capture
+		if c == nil || c.LifecycleStatus == "deleted" || c.SourceName == nil || c.ExternalID == nil {
+			continue
+		}
+		if *c.SourceName == sourceName && *c.ExternalID == externalID {
+			id := c.ID
+			return &id, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *memoryCaptureRepository) FindContentHashMatch(
+	_ context.Context,
+	userID uuid.UUID,
+	contentHash string,
+	excludeCaptureID uuid.UUID,
+) (*uuid.UUID, error) {
+	for key, agg := range r.items {
+		if key.userID != userID || key.captureID == excludeCaptureID {
+			continue
+		}
+		c := agg.Capture
+		if c == nil || c.LifecycleStatus == "deleted" || c.ContentHash == nil {
+			continue
+		}
+		if *c.ContentHash == contentHash {
+			id := c.ID
+			return &id, nil
+		}
+	}
+	return nil, nil
+}
+
 func TestCaptureServiceCreateWithoutProjectAndReplay100Times(t *testing.T) {
 	repo := newMemoryCaptureRepository()
 	captureService := NewCaptureService(repo, nil)
@@ -357,3 +401,217 @@ func TestCaptureServiceFallsBackToPrivacyFirstWhenNoSettingsSource(t *testing.T)
 		t.Fatalf("expected all-disabled default snapshot, got %#v", repo.lastPolicy)
 	}
 }
+
+func TestCaptureServiceImportNormalization(t *testing.T) {
+	userID := uuid.New()
+	captureID := uuid.New()
+
+	t.Run("rejects empty import text", func(t *testing.T) {
+		captureService := NewCaptureService(newMemoryCaptureRepository(), nil)
+		_, err := captureService.Create(context.Background(), userID, CreateCaptureInput{
+			ID:            captureID,
+			Kind:          entity.CaptureKindImport,
+			Text:          "   ",
+			ClientVersion: 1,
+		})
+		if !errors.Is(err, ErrInvalidCapture) {
+			t.Fatalf("expected invalid capture for empty import text, got %v", err)
+		}
+	})
+
+	t.Run("rejects oversized import text", func(t *testing.T) {
+		captureService := NewCaptureService(newMemoryCaptureRepository(), nil)
+		_, err := captureService.Create(context.Background(), userID, CreateCaptureInput{
+			ID:            captureID,
+			Kind:          entity.CaptureKindImport,
+			Text:          strings.Repeat("导", MaxCaptureTextRunes+1),
+			ClientVersion: 1,
+		})
+		if !errors.Is(err, ErrInvalidCapture) {
+			t.Fatalf("expected invalid capture for oversized import text, got %v", err)
+		}
+	})
+
+	t.Run("rejects oversized external_id", func(t *testing.T) {
+		captureService := NewCaptureService(newMemoryCaptureRepository(), nil)
+		externalID := strings.Repeat("x", 201)
+		_, err := captureService.Create(context.Background(), userID, CreateCaptureInput{
+			ID:            captureID,
+			Kind:          entity.CaptureKindImport,
+			Text:          "content",
+			ExternalID:    &externalID,
+			SourceName:    strPtr("旧备忘录"),
+			ClientVersion: 1,
+		})
+		if !errors.Is(err, ErrInvalidCapture) {
+			t.Fatalf("expected invalid capture for oversized external_id, got %v", err)
+		}
+	})
+
+	t.Run("rejects oversized source_name", func(t *testing.T) {
+		captureService := NewCaptureService(newMemoryCaptureRepository(), nil)
+		sourceName := strings.Repeat("源", 101)
+		_, err := captureService.Create(context.Background(), userID, CreateCaptureInput{
+			ID:            captureID,
+			Kind:          entity.CaptureKindImport,
+			Text:          "content",
+			SourceName:    &sourceName,
+			ClientVersion: 1,
+		})
+		if !errors.Is(err, ErrInvalidCapture) {
+			t.Fatalf("expected invalid capture for oversized source_name, got %v", err)
+		}
+	})
+
+	t.Run("defaults source to import", func(t *testing.T) {
+		repo := newMemoryCaptureRepository()
+		captureService := NewCaptureService(repo, nil)
+		result, err := captureService.Create(context.Background(), userID, CreateCaptureInput{
+			ID:            captureID,
+			Kind:          entity.CaptureKindImport,
+			Text:          "  导入的第一条笔记  ",
+			ClientVersion: 1,
+		})
+		if err != nil {
+			t.Fatalf("create import capture: %v", err)
+		}
+		if got := result.Aggregate.Capture.Source; got != "import" {
+			t.Fatalf("expected default source import, got %q", got)
+		}
+	})
+}
+
+func TestCaptureServiceImportOverrides(t *testing.T) {
+	repo := newMemoryCaptureRepository()
+	captureService := NewCaptureService(repo, nil)
+	userID := uuid.New()
+	captureID := uuid.New()
+	title := "自定义标题"
+	primaryType := "note"
+	tags := []string{"a", "b"}
+
+	result, err := captureService.Create(context.Background(), userID, CreateCaptureInput{
+		ID:                  captureID,
+		Kind:                entity.CaptureKindImport,
+		Text:                "原始正文内容",
+		ExternalID:          strPtr("t1"),
+		SourceName:          strPtr("旧备忘录"),
+		TitleOverride:       &title,
+		PrimaryTypeOverride: &primaryType,
+		TagsOverride:        tags,
+		ClientVersion:       1,
+	})
+	if err != nil {
+		t.Fatalf("create import capture: %v", err)
+	}
+	card := result.Aggregate.MemoryCard
+	if card.Title != title {
+		t.Fatalf("expected override title %q, got %q", title, card.Title)
+	}
+	if card.PrimaryType != primaryType {
+		t.Fatalf("expected override primary type %q, got %q", primaryType, card.PrimaryType)
+	}
+	if len(card.Tags) != 2 || card.Tags[0] != "a" || card.Tags[1] != "b" {
+		t.Fatalf("expected override tags, got %#v", card.Tags)
+	}
+	c := result.Aggregate.Capture
+	if c.ExternalID == nil || *c.ExternalID != "t1" {
+		t.Fatalf("expected external_id t1, got %#v", c.ExternalID)
+	}
+	if c.SourceName == nil || *c.SourceName != "旧备忘录" {
+		t.Fatalf("expected source_name 旧备忘录, got %#v", c.SourceName)
+	}
+	if c.ContentHash == nil || *c.ContentHash == "" {
+		t.Fatalf("expected content_hash to be set for import, got %#v", c.ContentHash)
+	}
+
+	revs := repo.revisions[captureKey{userID: userID, captureID: captureID}]
+	if len(revs) != 1 {
+		t.Fatalf("expected one initial revision, got %d", len(revs))
+	}
+	if revs[0].Source != entity.EnrichmentSourceImport {
+		t.Fatalf("expected initial revision source import, got %q", revs[0].Source)
+	}
+	if provenance, ok := revs[0].Provenance["source"]; !ok || provenance != "import" {
+		t.Fatalf("expected provenance source import, got %#v", revs[0].Provenance)
+	}
+}
+
+func TestCaptureServiceImportDuplicateExternalID(t *testing.T) {
+	repo := newMemoryCaptureRepository()
+	captureService := NewCaptureService(repo, nil)
+	userID := uuid.New()
+	firstID := uuid.New()
+
+	if _, err := captureService.Create(context.Background(), userID, CreateCaptureInput{
+		ID:            firstID,
+		Kind:          entity.CaptureKindImport,
+		Text:          "first",
+		ExternalID:    strPtr("t1"),
+		SourceName:    strPtr("旧备忘录"),
+		ClientVersion: 1,
+	}); err != nil {
+		t.Fatalf("create first import: %v", err)
+	}
+
+	secondID := uuid.New()
+	_, err := captureService.Create(context.Background(), userID, CreateCaptureInput{
+		ID:            secondID,
+		Kind:          entity.CaptureKindImport,
+		Text:          "first but reimported",
+		ExternalID:    strPtr("t1"),
+		SourceName:    strPtr("旧备忘录"),
+		ClientVersion: 1,
+	})
+	if !errors.Is(err, ErrDuplicateExternalID) {
+		t.Fatalf("expected duplicate external id error, got %v", err)
+	}
+	var dupErr *DuplicateExternalIDError
+	if !errors.As(err, &dupErr) {
+		t.Fatalf("expected DuplicateExternalIDError, got %T", err)
+	}
+	if dupErr.ExistingCaptureID != firstID {
+		t.Fatalf("expected existing capture id %s, got %s", firstID, dupErr.ExistingCaptureID)
+	}
+	if got := len(repo.items); got != 1 {
+		t.Fatalf("duplicate must not add data, got %d items", got)
+	}
+}
+
+func TestCaptureServiceImportContentHashDedupe(t *testing.T) {
+	repo := newMemoryCaptureRepository()
+	captureService := NewCaptureService(repo, nil)
+	userID := uuid.New()
+	firstID := uuid.New()
+
+	if _, err := captureService.Create(context.Background(), userID, CreateCaptureInput{
+		ID:            firstID,
+		Kind:          entity.CaptureKindImport,
+		Text:          "  相同  内容  ",
+		ClientVersion: 1,
+	}); err != nil {
+		t.Fatalf("create first import: %v", err)
+	}
+
+	secondID := uuid.New()
+	result, err := captureService.Create(context.Background(), userID, CreateCaptureInput{
+		ID:            secondID,
+		Kind:          entity.CaptureKindImport,
+		Text:          "相同 内容", // whitespace-collapsed hash matches
+		ClientVersion: 1,
+	})
+	if err != nil {
+		t.Fatalf("content-hash duplicate must still import: %v", err)
+	}
+	if result.Dedupe == nil || result.Dedupe.Status != "suggested" {
+		t.Fatalf("expected dedupe suggested, got %#v", result.Dedupe)
+	}
+	if result.Dedupe.ExistingCaptureID == nil || *result.Dedupe.ExistingCaptureID != firstID {
+		t.Fatalf("expected dedupe existing id %s, got %#v", firstID, result.Dedupe.ExistingCaptureID)
+	}
+	if got := len(repo.items); got != 2 {
+		t.Fatalf("suspected duplicate still creates a capture, got %d items", got)
+	}
+}
+
+func strPtr(s string) *string { return &s }

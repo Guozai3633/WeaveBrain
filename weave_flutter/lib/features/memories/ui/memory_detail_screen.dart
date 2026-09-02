@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../completions/ui/completion_panel.dart';
+import '../../settings/domain/ai_settings_notifier.dart';
 import '../data/memory_api.dart';
 import '../domain/memory_notifier.dart';
 import 'memory_list_screen.dart' show kPrimaryTypeLabels;
@@ -93,6 +95,14 @@ class _MemoryDetailScreenState extends ConsumerState<MemoryDetailScreen> {
               const SizedBox(height: 16),
               _fieldsBlock(context, detail),
               const SizedBox(height: 16),
+              CompletionPanel(
+                captureId: widget.captureId,
+                enabled: _aiCompletionAvailable(context, detail),
+                onApplied: () => ref
+                    .read(memoryDetailNotifierProvider.notifier)
+                    .load(widget.captureId),
+              ),
+              const SizedBox(height: 16),
               _noteButton(context, notifier),
               const SizedBox(height: 16),
               _revisionsBlock(context, detail),
@@ -103,6 +113,20 @@ class _MemoryDetailScreenState extends ConsumerState<MemoryDetailScreen> {
         ),
       ],
     );
+  }
+
+  // ---- AI 补全可用性 ----
+
+  bool _aiCompletionAvailable(BuildContext context, MemoryDetail detail) {
+    final aiSettings = ref.watch(aiSettingsNotifierProvider);
+    if (aiSettings is! AISettingsLoaded) {
+      Future.microtask(() {
+        ref.read(aiSettingsNotifierProvider.notifier).load();
+      });
+      return false;
+    }
+    return aiSettings.result.settings.aiCompletionEnabled &&
+        detail.memoryCard.processingStatus == 'ready';
   }
 
   // ---- 头部：类型 / 状态 / 置顶 ----

@@ -47,13 +47,21 @@ type CreateCaptureRequest struct {
 	CollectionID        *int64             `json:"collection_id"`
 	PrivacyMode         string             `json:"privacy_mode"`
 	ClientVersion       int                `json:"client_version"`
+	// Import passthrough (kind=import): ExternalID + SourceName form the dedup
+	// key; Title/Tags/PrimaryType seed the initial MemoryCard.
+	ExternalID  *string  `json:"external_id"`
+	SourceName  *string  `json:"source_name"`
+	Title       *string  `json:"title"`
+	Tags        []string `json:"tags"`
+	PrimaryType *string  `json:"primary_type"`
 }
 
 type CaptureResponse struct {
-	Capture    *entity.Capture    `json:"capture"`
-	MemoryCard *entity.MemoryCard `json:"memory_card"`
-	Replayed   bool               `json:"replayed,omitempty"`
-	RequestID  string             `json:"request_id"`
+	Capture    *entity.Capture      `json:"capture"`
+	MemoryCard *entity.MemoryCard   `json:"memory_card"`
+	Dedupe     *entity.CaptureDedupe `json:"dedupe,omitempty"`
+	Replayed   bool                 `json:"replayed,omitempty"`
+	RequestID  string               `json:"request_id"`
 }
 
 func NewCaptureHandler(captureService captureUseCase) *CaptureHandler {
@@ -119,6 +127,11 @@ func (h *CaptureHandler) Create(c *gin.Context) {
 		CollectionID:        request.CollectionID,
 		PrivacyMode:         request.PrivacyMode,
 		ClientVersion:       request.ClientVersion,
+		ExternalID:          request.ExternalID,
+		SourceName:          request.SourceName,
+		TitleOverride:       request.Title,
+		TagsOverride:        request.Tags,
+		PrimaryTypeOverride: request.PrimaryType,
 	})
 	if err != nil {
 		h.writeServiceError(c, err)
@@ -132,6 +145,7 @@ func (h *CaptureHandler) Create(c *gin.Context) {
 	c.JSON(status, CaptureResponse{
 		Capture:    result.Aggregate.Capture,
 		MemoryCard: result.Aggregate.MemoryCard,
+		Dedupe:     result.Dedupe,
 		Replayed:   result.Replayed,
 		RequestID:  getRequestID(c),
 	})
@@ -170,6 +184,7 @@ func (h *CaptureHandler) GetByID(c *gin.Context) {
 }
 
 func (h *CaptureHandler) writeServiceError(c *gin.Context, err error) {
+	var dupErr *service.DuplicateExternalIDError
 	switch {
 	case errors.Is(err, service.ErrInvalidCapture):
 		writeV3Error(c, http.StatusBadRequest, V3ErrorInvalidArgument, err.Error(), nil)
@@ -182,6 +197,14 @@ func (h *CaptureHandler) writeServiceError(c *gin.Context, err error) {
 			V3ErrorIdempotencyConflict,
 			"Idempotency-Key was already used with different content",
 			nil,
+		)
+	case errors.As(err, &dupErr):
+		writeV3Error(
+			c,
+			http.StatusConflict,
+			V3ErrorPreconditionFailed,
+			"external_id 已导入过",
+			map[string]any{"existing_capture_id": dupErr.ExistingCaptureID},
 		)
 	default:
 		writeV3Error(c, http.StatusInternalServerError, V3ErrorInternal, "internal server error", nil)
