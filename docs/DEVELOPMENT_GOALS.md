@@ -18,7 +18,7 @@
 | G5 | 验收 B：核心捕捉与 AI 控制 | R7 | R7 完成（后端 242 测试含真实 PG 集成全绿；20 样本人工验收待回填） |
 | G6 | AI 补全 | R8 | R8 完成（后端 308 测试含真实 PG 集成全绿 + 前端 144 全绿；真机/E2E 待验证） |
 | G7 | 单条与批量导入 | R9 | R9 完成（后端 337 无 env + 356 真实 PG 集成全绿 + 前端 184 全绿） |
-| G8 | Web 回顾端、同步与工作流预留 | R10 | 未开始 |
+| G8 | Web 回顾端、同步与工作流预留 | R10 | R10 完成（后端 349 无 env + 369 真实 PG 集成全绿 + 前端 198 全绿；浏览器/Ollama E2E 待验证） |
 | G9 | 移动快捷入口与一种回响 | R11 | 未开始 |
 | G10 | 验收 C：MVP 功能完整性 | R12 | 未开始 |
 | G11 | 安全、隐私、性能与发布候选 | R13 | 未开始 |
@@ -223,18 +223,18 @@
 ## G8 Web 回顾端、同步与工作流预留（R10）
 
 ### 步骤清单
-- [ ] Web 记忆流、搜索、详情、导入和设置
-- [ ] 登录后游客 Capture 合并
-- [ ] 同步游标和冲突处理
-- [ ] /workflows、/workflows/:id/designer「规划中」页
-- [ ] GET /api/v3/capabilities（workflow_designer=false, workflow_execution=false）
+- [x] Web 记忆流、搜索、详情、导入和设置 —— Web 回顾面为纯 HTTP + sembast(IndexedDB) 共享代码，`flutter build web --release` 门禁通过 + widget 自动化回归（记忆流/详情/导入/AI 设置入口全链路）
+- [x] 登录后游客 Capture 合并 —— 设置页「游客记录与同步」只读区块（guestLocalCapturesProvider 统计设备 owner==null 待认领条数）；claimOwner（R3）不变；capture_sync_service_test 补「认领一次、不重复上传」断言
+- [x] 同步游标和冲突处理 —— MVP server-authoritative：不做游标/推送引擎；收敛靠 capture_id 幂等推送 + 服务端读取；B3 真实 PG 集成测试证明幂等重放 200（行数恰 1）+ 冲突 409（行数仍 1）；增量游标/服务端推送契约预留（API_V3_CONTRACT §13.4）
+- [x] /workflows、/workflows/:id/designer「规划中」页 —— workflow_list_screen（规划中 banner + 空状态 + 新建→SnackBar 不跳假编辑器）+ workflow_designer_screen（占位）+ app.dart 路由 + 设置页「工作流」入口（trailing 规划中 chip）；游客访问 /workflows → 重定向登录
+- [x] GET /api/v3/capabilities（workflow_designer=false, workflow_execution=false）—— capabilities_handler（公共）+ contract_v3 注册；前端 platform feature（capabilities_api + notifier，error 回退全关闭）
 
 ### 完成条件
-- [ ] 同一 Capture 在手机/Web 最终一致
-- [ ] 游客记录登录后无重复合并
-- [ ] Web 可完成回顾、搜索、导入和 AI 设置
-- [ ] 误调用工作流接口不创建任务或副作用
-- [ ] 页面明确展示「规划中」
+- [x] 同一 Capture 在手机/Web 最终一致 —— B3 收敛集成测试（设备 A 创建 → Web 幂等重放 → 行数 1；冲突 → 409 行数仍 1）
+- [x] 游客记录登录后无重复合并 —— F3 设置页状态区块（guestLocalCapturesProvider 真实可见待认领数）+ capture_sync_service 无重复断言（claim 一次 / 二次 sync 不上传）
+- [x] Web 可完成回顾、搜索、导入和 AI 设置 —— F4 `flutter build web --release` 成功 + widget_test 全链路回归（浏览器/Ollama 真机 E2E 待验证，见报告）
+- [x] 误调用工作流接口不创建任务或副作用 —— B2 守卫 501 + B3 断言 capture_outbox 计数不变
+- [x] 页面明确展示「规划中」—— F2 workflows 页面/示例/新建 + 设置入口；无假编辑器（Blueprint §14.6 / WORKFLOW-001）
 
 ---
 

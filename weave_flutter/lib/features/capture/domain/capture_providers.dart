@@ -42,6 +42,23 @@ final localCapturesProvider = StreamProvider<List<LocalCapture>>((ref) async* {
   );
 });
 
+/// 设备上尚未被任何账号认领的游客记录（`ownerUserId == null`）。
+///
+/// 与按会话过滤的 [localCapturesProvider] 不同：游客记录在本地保存时 owner 为空，
+/// 登录后 `capture_sync_service` 才经 `claimOwner` 认领为当前账号——因此在登录会话中
+/// 它们不可见于 [localCapturesProvider]，却又真实待合并。本 provider 不做会话过滤，
+/// 供设置页「游客记录与同步」只读区块统计待认领条数（不触发任何同步）。
+final guestLocalCapturesProvider = StreamProvider<List<LocalCapture>>((
+  ref,
+) async* {
+  final store = await ref.watch(localCaptureStoreProvider.future);
+  List<LocalCapture> ownerless(List<LocalCapture> captures) => captures
+      .where((capture) => capture.ownerUserId == null)
+      .toList(growable: false);
+  yield ownerless(await store.listAll());
+  yield* store.watchAll().map(ownerless);
+});
+
 final captureApiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient(
     baseUrl: 'http://$apiHost/api/v3',

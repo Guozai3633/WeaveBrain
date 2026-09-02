@@ -900,3 +900,70 @@ POST /api/v3/imports/:id/cancel → 200（`{job, request_id}`），未完成 job
 - internal/api/import_handler_test.go：401/400/404/409/500 映射、三阶段 happy path、错误报告 CSV content-type；
 - internal/service/capture_service_test.go（扩展）+ internal/api/capture_handler_test.go（扩展）：kind=import 归一化、external_id 重复 → 409、content_hash → dedupe.suggested；
 - 前端 test/features/imports/：import_api_test / import_notifier_test / import_screen_test + widget_test / settings / capture 入口回归。
+
+## 13. 平台能力与工作流预留（R10）
+
+### 13.1 GET /api/v3/capabilities（公共）
+
+能力广播端点，**公共**（无需 Bearer Token，与 GET /api/v3/meta 同级注册于 `registerV3ContractRoutes`）。客户端据此呈现「规划中」而非可用的假入口；MVP 不据此隐藏既有功能。
+
+GET /api/v3/capabilities → 200：
+
+```json
+{
+  "mobile_capture": true,
+  "web_review": true,
+  "workflow_designer": false,
+  "workflow_execution": false,
+  "supported_capture_sources": ["text", "audio", "import"]
+}
+```
+
+- `mobile_capture` / `web_review`：当前 MVP 构建恒 true；
+- `workflow_designer` / `workflow_execution`：恒 false —— 工作流设计/执行已预留但本版本不开放；
+- `supported_capture_sources`：与 `POST /api/v3/captures` 实际接受的 `kind` 一致（`entity.CaptureKindText/Audio/Import`，服务端生成，不硬编码字符串）。
+
+### 13.2 FEATURE_NOT_ENABLED 双状态语义（501 vs 409）
+
+同一 `code=FEATURE_NOT_ENABLED` 在不同资源上使用不同 HTTP 状态，客户端必须按场景区分（禁止用 message 分支）：
+
+| HTTP | 场景 | 语义 | 位置 |
+|---:|---|---|---|
+| 501 | 服务端**不提供**该能力（预留命名空间 / 未实现） | 任何用户、任何开关下都不可用，纯守卫，无副作用 | `/api/v3/workflows` 守卫（R10 新增，见 §13.3） |
+| 409 | 服务端提供、但**当前用户的 AI 开关关闭** | 用户可去设置开启后重试 | R8/R9 AI 补全 / 导入补全门控（§11 / §12，**不得改动既有 409**） |
+
+### 13.3 预留 /api/v3/workflows 命名空间（受保护，501）
+
+`/api/v3/workflows` 及 `/api/v3/workflows/*` 为本轮起**保留命名空间**。在 `setupRoutes` 的 protectedV3 块顶部无条件注册 `registerWorkflowGuardRoutes`（纯守卫、无 service 依赖），**任何**方法/路径返回 501 / FEATURE_NOT_ENABLED：
+
+```json
+{
+  "code": "FEATURE_NOT_ENABLED",
+  "message": "workflows are not available in this build",
+  "request_id": "UUID",
+  "details": { "workflow_designer": false, "workflow_execution": false }
+}
+```
+
+- 需登录：注册于 protected 前缀，未带 Token → 401（守卫不遮蔽前缀鉴权）；游客不可访问（前端路由同步守卫）；
+- **无副作用**：守卫不创建 run / 后台任务 / 外部调用，DB 计数不变（B3 集成测试断言）；
+- 预留子资源（后续轮次开放）：`POST /workflows`（创建）、`GET /workflows`（列表）、`GET/PUT/DELETE /workflows/:id`、`PUT /workflows/:id/draft`、`POST /workflows/:id/validate`、`POST /workflows/:id/publish`、`POST /workflows/:id/run`；
+- gin 通配符 `group.Any("/workflows")` + `group.Any("/workflows/*any")` 仅守卫该前缀，不吞兄弟路由，v3 NoRoute 不受影响。
+
+### 13.4 同步与多设备收敛（MVP server-authoritative）
+
+MVP **不做**增量游标 / 服务端推送同步引擎。收敛模型（G8 完成条件 1）为 **server-authoritative**：
+
+- 客户端设备保存本地捕捉后，经既有「capture_id 稳定幂等推送」（R3 已建）上传；
+- 服务端为权威：`(user_id, capture_id)` 幂等；**同规范化内容重放 → 200 + replayed=true**；**同 capture_id 不同内容 → 409 / IDEMPOTENCY_CONFLICT**；GET 拉取后各设备最终一致、无重复（同一 Capture 手机/Web 各一条）；
+- 游客记录（本地 `ownerUserId == null`）登录后首次自动同步经 `claimOwner` 认领为当前账号；按 capture_id 幂等，重复同步不重复上传；
+- 增量游标 / 服务端推送 / 冲突合并面板为**预留项**，不在 MVP 实现。
+
+### 13.5 R10 自动化证据
+
+- internal/api/capabilities_handler_test.go：200 + 5 键断言（mobile_capture/web_review true、workflow_* false、sources=text/audio/import）+ 公共无鉴权 200；
+- internal/api/workflow_guard_test.go：create/list/get/draft/validate/publish/run/delete 全 → 501 + details 两 false；守卫不遮蔽 protected 前缀鉴权；
+- internal/api/r10_convergence_integration_test.go（真实 PG）：设备 A 创建 → Web 幂等重放 200（行数恰 1）→ 冲突 409（行数仍 1）→ capabilities 公共 200 → workflows 带鉴权 501 且 capture_outbox 计数不变；
+- 前端 test/features/platform/：capabilities_api_test（模型/路径）+ capabilities_notifier_test（data/error 回退全关闭）；
+- 前端 test/features/workflows/workflow_screens_test.dart + test/widget_test.dart：规划中页 / SnackBar 非假编辑器 / 游客 /workflows → /login / 设置合并状态与入口跳转。
+

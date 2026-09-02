@@ -70,6 +70,11 @@ func (s *Server) setupRoutes() {
 	protectedV3 := s.engine.Group(apiV3Prefix)
 	protectedV3.Use(v3JWTMiddleware(s.tokenCfg))
 	{
+		// /api/v3/workflows is a reserved namespace for later rounds. Every
+		// write/run call here must 501 without side effects (pure guard, no
+		// service dependency), so it is registered unconditionally.
+		registerWorkflowGuardRoutes(protectedV3)
+
 		captureHandler := NewCaptureHandler(s.services.Capture)
 		captureHandler.RegisterRoutes(protectedV3)
 

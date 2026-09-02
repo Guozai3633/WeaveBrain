@@ -94,6 +94,10 @@ func registerV3ContractRoutes(engine *gin.Engine) {
 		})
 	})
 
+	// Public capability advertisement: which MVP features this build offers.
+	// Workflow design/execution are reserved and reported as disabled.
+	v3.GET("/capabilities", capabilitiesHandler)
+
 	engine.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, apiV3Prefix+"/") ||
 			c.Request.URL.Path == apiV3Prefix {

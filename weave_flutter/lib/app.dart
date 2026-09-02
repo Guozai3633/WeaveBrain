@@ -18,6 +18,8 @@ import '../features/settings/ui/ai_settings_screen.dart';
 import '../features/settings/ui/mcp_settings_screen.dart';
 import '../features/settings/ui/settings_screen.dart';
 import '../features/timeline/ui/timeline_screen.dart';
+import '../features/workflows/ui/workflow_designer_screen.dart';
+import '../features/workflows/ui/workflow_list_screen.dart';
 import '../shared/auth/auth_state.dart';
 import '../shared/models/idea.dart';
 import '../shared/widgets/app_scaffold.dart';
@@ -68,10 +70,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         },
       ),
       // 隐藏路由：旧功能保留入口，不在底部导航展示。
-      GoRoute(
-        path: '/ideas',
-        builder: (context, state) => const IdeasScreen(),
-      ),
+      GoRoute(path: '/ideas', builder: (context, state) => const IdeasScreen()),
       GoRoute(
         path: '/ideas/:id',
         builder: (context, state) {
@@ -103,6 +102,20 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/imports',
         builder: (context, state) => const ImportScreen(),
+      ),
+      GoRoute(
+        path: '/workflows',
+        builder: (context, state) => const WorkflowListScreen(),
+      ),
+      GoRoute(
+        path: '/workflows/:workflowId/designer',
+        builder: (context, state) {
+          final workflowId = state.pathParameters['workflowId'];
+          if (workflowId == null || workflowId.isEmpty) {
+            return const Scaffold(body: Center(child: Text('缺少工作流参数')));
+          }
+          return WorkflowDesignerScreen(workflowId: workflowId);
+        },
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, shell) => AppScaffold(navigationShell: shell),

@@ -1,16 +1,23 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import 'package:weave_flutter/features/auth/ui/login_screen.dart';
 import 'package:weave_flutter/features/capture/data/sembast_local_capture_store.dart';
 import 'package:weave_flutter/features/capture/domain/capture_providers.dart';
+import 'package:weave_flutter/features/capture/domain/local_capture.dart';
 import 'package:weave_flutter/features/imports/data/import_api.dart';
 import 'package:weave_flutter/features/memories/data/memory_api.dart';
+import 'package:weave_flutter/features/platform/data/capabilities_api.dart';
 import 'package:weave_flutter/features/settings/data/ai_settings_api.dart';
+import 'package:weave_flutter/features/settings/ui/settings_screen.dart';
+import 'package:weave_flutter/features/workflows/ui/workflow_list_screen.dart';
 import 'package:weave_flutter/main.dart';
 
 // ---- 测试辅助：记忆网关替身 ----
@@ -81,8 +88,7 @@ class _FakeImportGateway implements ImportGateway {
   }
 
   @override
-  Future<ImportJobModel> getJob(String jobId) =>
-      throw UnimplementedError();
+  Future<ImportJobModel> getJob(String jobId) => throw UnimplementedError();
 
   @override
   Future<ImportPreviewModel> preview(
@@ -104,15 +110,13 @@ class _FakeImportGateway implements ImportGateway {
   Future<ImportCompletionModel> completionPreview(
     String jobId, {
     List<int>? rowNumbers,
-  }) =>
-      throw UnimplementedError();
+  }) => throw UnimplementedError();
 
   @override
   Future<ImportCompletionModel> completionApply(
     String jobId, {
     required List<ImportRowSelection> selections,
-  }) =>
-      throw UnimplementedError();
+  }) => throw UnimplementedError();
 
   @override
   Future<ImportCommitResultModel> commit(
@@ -176,12 +180,18 @@ class _FakeMemoryGateway implements MemoryGateway {
   }
 
   @override
-  Future<MemoryMutation> addNote(String captureId, {required String text}) async {
+  Future<MemoryMutation> addNote(
+    String captureId, {
+    required String text,
+  }) async {
     throw UnimplementedError();
   }
 
   @override
-  Future<MemoryMutation> setPinned(String captureId, {required bool pinned}) async {
+  Future<MemoryMutation> setPinned(
+    String captureId, {
+    required bool pinned,
+  }) async {
     throw UnimplementedError();
   }
 
@@ -240,15 +250,36 @@ MemoryDetail _detail(String captureId) {
   );
 }
 
+class _FakeCapabilitiesGateway implements CapabilitiesGateway {
+  const _FakeCapabilitiesGateway();
+
+  @override
+  Future<PlatformCapabilities> fetch() async =>
+      const PlatformCapabilities.disabled();
+}
+
+/// 游客记录（owner == null）构造器：登录前在本机保存的捕捉。
+LocalCapture _guestCapture(String id) {
+  final now = DateTime.utc(2026, 8, 30);
+  return LocalCapture(
+    id: id,
+    text: '游客记录内容',
+    capturedAt: now,
+    source: 'web',
+    syncState: LocalSyncState.savedLocal,
+    createdAt: now,
+    updatedAt: now,
+  );
+}
+
 Future<_FakeMemoryGateway> _pumpApp(
   WidgetTester tester, {
   _FakeMemoryGateway? gateway,
   Map<String, String>? storage,
+  List<Override> extraOverrides = const [],
 }) async {
   FlutterSecureStorage.setMockInitialValues(storage ?? {});
-  final database = await databaseFactoryMemory.openDatabase(
-    'app_widget_test',
-  );
+  final database = await databaseFactoryMemory.openDatabase('app_widget_test');
   final store = SembastLocalCaptureStore(database);
   final fakeGateway = gateway ?? _FakeMemoryGateway();
 
@@ -260,6 +291,10 @@ Future<_FakeMemoryGateway> _pumpApp(
         memoryGatewayProvider.overrideWithValue(fakeGateway),
         aiSettingsGatewayProvider.overrideWithValue(_FakeAiSettingsGateway()),
         importGatewayProvider.overrideWithValue(_FakeImportGateway()),
+        capabilitiesGatewayProvider.overrideWithValue(
+          _FakeCapabilitiesGateway(),
+        ),
+        ...extraOverrides,
       ],
       child: const WeaveBrainApp(),
     ),
@@ -327,6 +362,98 @@ void main() {
       expect(gateway.detailCalls, ['c1']);
       expect(find.text('记忆详情'), findsOneWidget); // 详情页 AppBar
       expect(find.text('闪念标题'), findsWidgets); // 列表卡仍在树中 + 详情头部
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
+
+  testWidgets('guest visiting /workflows is redirected to login', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+
+    // 游客落在捕捉页；直接访问预留的 /workflows 应被守卫重定向到登录页。
+    final router = GoRouter.of(tester.element(find.byType(NavigationBar)));
+    router.go('/workflows');
+    await tester.pumpAndSettle();
+
+    expect(find.byType(LoginScreen), findsOneWidget);
+    expect(find.byType(WorkflowListScreen), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('authenticated settings shows pending guest merge count', (
+    tester,
+  ) async {
+    await _pumpApp(
+      tester,
+      storage: {
+        'jwt_token': 'test-token',
+        'user_data': jsonEncode({'id': 'u1', 'display_name': '测试用户'}),
+      },
+      extraOverrides: [
+        guestLocalCapturesProvider.overrideWith(
+          (ref) => Stream.value([_guestCapture('g1')]),
+        ),
+      ],
+    );
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('我的'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('游客记录 1 条将在登录后自动合并到账号，不产生重复。'), findsOneWidget);
+    expect(find.text('暂无待合并的游客记录。'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets(
+    'authenticated settings shows no pending and opens /workflows page',
+    (tester) async {
+      await _pumpApp(
+        tester,
+        storage: {
+          'jwt_token': 'test-token',
+          'user_data': jsonEncode({'id': 'u1', 'display_name': '测试用户'}),
+        },
+      );
+
+      await tester.tap(
+        find.descendant(
+          of: find.byType(NavigationBar),
+          matching: find.text('我的'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 无游客记录 → 只读区块提示「暂无待合并」。
+      expect(find.text('暂无待合并的游客记录。'), findsOneWidget);
+
+      // 「工作流」入口展示「规划中」；点击进入 /workflows 占位页而非编辑器。
+      final settingsScrollable = find.descendant(
+        of: find.byType(SettingsScreen),
+        matching: find.byType(Scrollable),
+      );
+      await tester.scrollUntilVisible(
+        find.widgetWithText(ListTile, '工作流'),
+        120,
+        scrollable: settingsScrollable,
+      );
+      await tester.tap(find.widgetWithText(ListTile, '工作流'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(WorkflowListScreen), findsOneWidget);
+      expect(find.text('还没有工作流'), findsOneWidget);
+      expect(find.textContaining('设计与执行能力均未开放'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();

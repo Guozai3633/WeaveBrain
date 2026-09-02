@@ -451,4 +451,49 @@ void main() {
     service.dispose();
     await store.close();
   });
+
+  test('guest record is claimed exactly once after login, never re-uploaded',
+      () async {
+    final store = await createStore();
+    final capture = pendingCapture(); // ownerUserId == null → guest-owned
+    await store.saveDraft(capture);
+    await store.markPendingSync(capture.id);
+    final remote = FakeCaptureRemote(
+      (_) async => const CaptureServerRevision(
+        version: 1,
+        processingStatus: ServerProcessingStatus.ready,
+      ),
+    );
+    String? userId;
+    final service = CaptureSyncService(
+      store: store,
+      remote: remote,
+      currentUserId: () async => userId,
+      automaticRetry: false,
+    );
+
+    // 游客阶段：保持 owner 为空，绝不触发远端上传。
+    final guestSummary = await service.syncPending(includeDeferred: true);
+    expect(guestSummary.skippedBecauseGuest, isTrue);
+    expect(remote.captureIds, isEmpty);
+    expect((await store.getById(capture.id))?.ownerUserId, isNull);
+
+    // 登录后：claimOwner 认领为当前账号并同步一次（幂等收敛，服务端按
+    // capture_id 去重，R3 已覆盖 200-replay；此处断言本地只上传一次）。
+    userId = 'user-a';
+    final mergeSummary = await service.syncPending(includeDeferred: true);
+    expect(mergeSummary.synced, 1);
+    expect(remote.captureIds, [capture.id]);
+    final stored = await store.getById(capture.id);
+    expect(stored?.ownerUserId, 'user-a');
+    expect(stored?.syncState, LocalSyncState.synced);
+
+    // 重复 syncPending：已无待处理记录，不产生第二次上传。
+    final again = await service.syncPending(includeDeferred: true);
+    expect(again.attempted, 0);
+    expect(remote.captureIds, [capture.id]);
+
+    service.dispose();
+    await store.close();
+  });
 }

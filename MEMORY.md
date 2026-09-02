@@ -1341,3 +1341,51 @@
 ### 下一步
 - 合并 R9（合并提交）
 - G8 / R10：Web 回顾端、同步与工作流预留
+
+---
+
+## Sprint 22: R10 Web 回顾端、同步与工作流预留（G8）
+**状态**: ✅ 已完成（后端 349 无 env + 369 真实 PG 集成全绿 + 前端 198 全绿；浏览器/Ollama E2E 待验证）
+
+### 已完成
+
+#### 后端：capabilities + workflow 守卫 + 多设备收敛
+- [x] GET /api/v3/capabilities（公共）—— capabilities_handler.go：`V3CapabilitiesResponse{mobile_capture:true, web_review:true, workflow_designer:false, workflow_execution:false, supported_capture_sources:[text,audio,import]（取 entity.CaptureKind，不硬编码）}`；contract_v3.go `/meta` 旁注册（公共无鉴权）+ capabilities_handler_test.go（200 + 5 键 + 公共）
+- [x] /api/v3/workflows 守卫（受保护 501）—— workflow_guard.go：`Any("/workflows")` + `Any("/workflows/*any")` → 501 FEATURE_NOT_ENABLED + details 两 false（纯守卫无 service）；server.go protectedV3 顶部无条件注册；workflow_guard_test.go（8 子路径全 501 + 不遮蔽 protected 前缀鉴权）
+- [x] 多设备收敛集成测试 r10_convergence_integration_test.go（真实 PG）—— 设备 A 创建 → Web 幂等重放 200（captures/memory_cards/capture_outbox 行数恰 1）→ GET 恰 1 条 → 冲突不同内容 409（行数仍 1）→ capabilities 公共 200 → workflows 带鉴权 501 且 capture_outbox 计数不变
+- [x] **501 vs 409 语义固化**：501 = 服务端不提供（本守卫）；409 = R8/R9 用户 AI 开关关闭（既有 handler 不动，避免破坏 R8/R9 客户端）
+
+#### 前端：capabilities feature + workflows 规划中 + 设置合并状态
+- [x] platform feature：capabilities_api.dart（模型蛇形映射 + disabled 回退 + CapabilitiesGateway/Provider）+ capabilities_notifier.dart（capabilitiesProvider，error → 全关闭回退）；测试 7
+- [x] workflows feature：workflow_list_screen.dart（规划中 banner + 空状态 + 新建→SnackBar 不跳假编辑器 + 示例卡）/ workflow_designer_screen.dart（占位「$workflowId 尚未开放」）；app.dart 加 `/workflows`、`/workflows/:workflowId/designer` 路由（游客守卫自动拦 → /login）；设置页「工作流」ListTile + `_PlannedChip`
+- [x] 设置页「游客记录与同步」只读区块 —— 新增 `guestLocalCapturesProvider`（capture_providers.dart，设备级 owner==null 未过滤流）；**关键修正**：若用按会话过滤的 `localCapturesProvider`，登录态下游客记录（owner==null）被过滤恒为 0，故必须读 guestLocalCapturesProvider；_MergeStatusCard 显示待认领条数 + 「登录后自动合并，不产生重复」
+- [x] 无重复断言：capture_sync_service_test 补「游客 owner-null → 登录 claimOwner 认领一次 + 二次 sync 不上传」
+- [x] 测试：workflow_screens_test（3：规划中/空状态、新建 SnackBar 非编辑器、designer 占位）+ widget_test 增（游客 /workflows → /login、设置合并计数、设置无待合并 + 入口跳 /workflows）+ capabilities override/extraOverrides 脚手架
+
+### 技术决策
+- **MVP server-authoritative 收敛**：不做增量游标/推送/合并冲突面板；证据 = B3 幂等重放 + 冲突 409 集成测试；增量同步契约预留（API_V3_CONTRACT §13.4）
+- **无假工作流编辑器**（Blueprint §14.6 / WORKFLOW-001）：只做空状态 + 示例 + 「规划中」标记；designer 为占位页，不渲染可误用的画布
+- **游客合并仅 UI + 断言**（用户决策）：claimOwner 流程不改；设置页状态区块 + 服务测试无重复；guestLocalCapturesProvider 不触发任何同步
+- **gin 通配符守卫** `/workflows/*any` 仅守卫该前缀，不吞兄弟路由，v3 NoRoute 不受影响；注册于 protectedV3（游客不可访问）
+- 计数口径沿用：no-env 349 = 2 capabilities + workflow_guard（父 1 + 子 8 + 前缀 1 = 10）+ 既有 337 回归；with-env 369 = 上 + B3 集成 1
+
+### 验证
+- [x] `go build ./...` / `go vet ./...` 通过
+- [x] `go test ./...`（无 env）**349** 全绿（R9 337 → +12）
+- [x] `WEAVEBRAIN_TEST_DATABASE_URL=... go test ./...`（真实 PG）**369** 全绿 0 SKIP（R9 356 → +13）—— B3 收敛测试在真实 PG 实际运行
+- [x] `dart analyze lib test` 0 issue；`flutter test` **198** 全绿（R9 184 → +14）
+- [x] `flutter build web --release` 成功（dart2js；wasm dry-run 仅警告）
+
+### 报告
+- [x] docs/round-reports/R10_REPORT.md
+- [x] docs/API_V3_CONTRACT.md §13（平台能力与工作流预留：capabilities JSON / 501 vs 409 / workflows 保留命名空间 / server-authoritative 同步模型 / 自动化证据）
+- [x] docs/DEVELOPMENT_GOALS.md G8（5 步 + 5 完成条件全部勾选；顶层表 G8 → R10 完成）
+
+### 已知限制
+- 浏览器 / Ollama 真机 E2E 待验证（secure storage web / IndexedDB 运行时仅真实浏览器暴露；本轮证据 = build web + widget 自动化）
+- 增量游标/服务端推送同步引擎、工作流保存/发布/运行均为预留项，不在 MVP 实现
+- `flutter analyze` 本机崩溃沿用 `dart analyze` 替代（R4—R8 记录）；wasm dry-run 因 flutter_secure_storage_web 用 dart:html 告警（非阻塞）
+
+### 下一步
+- 合并 R10（合并提交）
+- G9 / R11：移动快捷入口与一种回响（App 内全局捕捉按钮、App Shortcut、桌面小组件、极简录音页、一种回响 + 完成/稍后/无关反馈、频率与静默时段、通知深链）
