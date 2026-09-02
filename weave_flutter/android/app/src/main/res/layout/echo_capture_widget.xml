@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 桌面速记小组件：整块可点，点按启动 /record?auto=1 极简录音。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/echo_capture_widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:layout_margin="4dp"
+    android:orientation="vertical"
+    android:background="@drawable/echo_capture_widget_bg"
+    android:padding="12dp">
+
+    <TextView
+        android:id="@+id/echo_capture_widget_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fontFamily="sans-serif"
+        android:gravity="center"
+        android:text="速记"
+        android:textColor="#1C1B1F"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        tools:text="速记" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:paddingTop="4dp"
+        android:text="点按即开始录音"
+        android:textColor="#6B675E"
+        android:textSize="12sp"
+        tools:text="点按即开始录音" />
+</LinearLayout>

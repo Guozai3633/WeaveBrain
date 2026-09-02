@@ -102,6 +102,11 @@ func (s *Server) setupRoutes() {
 			importHandler := NewImportHandler(s.services.Import)
 			importHandler.RegisterRoutes(protectedV3)
 		}
+
+		if s.services.Echo != nil {
+			echoHandler := NewEchoHandler(s.services.Echo)
+			echoHandler.RegisterRoutes(protectedV3)
+		}
 	}
 
 	// Public routes (no auth required)

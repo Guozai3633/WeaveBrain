@@ -28,6 +28,8 @@ type DBStore struct {
 	Memory        MemoryRepository
 	Completion    CompletionRepository
 	Import        ImportRepository
+	EchoSettings  UserEchoSettingsRepository
+	Echo          EchoRepository
 }
 
 func NewFromPool(pool *pgxpool.Pool) *DBStore {
@@ -52,6 +54,8 @@ func NewFromPool(pool *pgxpool.Pool) *DBStore {
 		Memory:        NewMemoryRepository(conn),
 		Completion:    NewCompletionRepository(conn),
 		Import:        NewImportRepository(conn),
+		EchoSettings:  NewUserEchoSettingsRepository(conn),
+		Echo:          NewEchoRepository(conn),
 	}
 }
 

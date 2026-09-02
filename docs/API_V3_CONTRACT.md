@@ -967,3 +967,203 @@ MVP **不做**增量游标 / 服务端推送同步引擎。收敛模型（G8 完
 - 前端 test/features/platform/：capabilities_api_test（模型/路径）+ capabilities_notifier_test（data/error 回退全关闭）；
 - 前端 test/features/workflows/workflow_screens_test.dart + test/widget_test.dart：规划中页 / SnackBar 非假编辑器 / 游客 /workflows → /login / 设置合并状态与入口跳转。
 
+---
+
+# 14. 回响接口（R11 / G9）
+
+## 14.0 设计决策（约束本契约）
+
+- **回响 = 按需生成 + 客户端本地通知，无推送设施、不依赖 Temporal**。服务端只在
+  `GET /echoes/current` 被读取时按 cadence 决定「现在是否应该有一张卡片」，并**每次恰返回一条**
+  记忆卡片 + 出现原因；提醒只由客户端本地通知调度（属于客户端行为，不在本契约范围内）。
+- **服务端单行纪律**：`user_echoes` 里一个用户同一时刻至多一条 `open`。重复打开/通知点击
+  都读到同一条 open 行（跨打开稳定）；超窗未答的 open 在下次读取时滚动为 `expired` 并生成下一条。
+- **cadence 由服务端在读取时强制**（锚定最近一条任意状态 echo 行的 `created_at`），客户端设置的
+  投递时刻/静默时段只决定「何时邀请」，不决定「何时真正到期」。
+- **settings 服务端管控**：镜像 AI settings 的 revision CAS 乐观并发。
+- 客户端登录限定：回响体验需要账号（卡片来自云端记忆）；游客不访问这些端点。
+
+## 14.1 数据模型
+
+`user_echo_settings`（每个用户至多一行）：
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| user_id | UUID PK → users(id) ON DELETE CASCADE | |
+| enabled | BOOL NOT NULL DEFAULT FALSE | 默认关闭，用户显式开启 |
+| cadence | VARCHAR(20) CHECK in ('daily','every_other_day','weekly') | 步进天数 1/2/7 |
+| revision | BIGINT NOT NULL DEFAULT 0 | 乐观并发 |
+| created_at / updated_at | TIMESTAMPTZ | |
+
+`user_echoes`（回响行）：
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| id | UUID PK | 客户端深链 / 反馈目标 |
+| user_id | UUID NOT NULL | |
+| capture_id | UUID NOT NULL | FK (user_id,capture_id) → captures(user_id,id) ON DELETE CASCADE |
+| status | VARCHAR(16) CHECK in ('open','done','later','not_relevant','expired') | 见 14.3 |
+| reason_code | VARCHAR(24) CHECK in ('first_echo','pinned','oldest','reminder') | 见 14.4 |
+| created_at / updated_at | TIMESTAMPTZ | |
+| resolved_at | TIMESTAMPTZ NULL | 反馈/过期时间 |
+
+索引：`(user_id, created_at DESC)`；`(user_id, capture_id, created_at DESC)`。
+同一卡片冷却期后可再次回响 → 不建 (user_id, capture_id) 唯一。
+
+## 14.2 GET /users/me/echo-settings
+
+受保护。返回当前用户回响设置；无行时返回服务端默认值（不落库）。
+
+请求：无。
+
+响应 `200`：
+
+```json
+{
+  "settings": {
+    "user_id": "5f0c1a86-...",
+    "enabled": false,
+    "cadence": "daily",
+    "revision": 0,
+    "created_at": "2026-09-01T08:00:00Z",
+    "updated_at": "2026-09-01T08:00:00Z"
+  },
+  "request_id": "3b6a0f70-..."
+}
+```
+
+## 14.3 PATCH /users/me/echo-settings
+
+受保护。部分更新，`expected_revision` 必填并参与 CAS。
+
+请求体：
+
+```json
+{ "expected_revision": 0, "enabled": true }
+{ "expected_revision": 1, "cadence": "every_other_day" }
+```
+
+- 至少一个业务字段（`enabled` / `cadence`）必须出现；`cadence` 必须 ∈ daily/every_other_day/weekly。
+- 成功：`revision` 自增 1，返回 14.2 形状（`200`）。
+- 首启：无行时服务端以 revision 1 建行（无需客户端先 GET）。
+- 错误：401 UNAUTHORIZED（未鉴权）；400 INVALID_ARGUMENT（缺 `expected_revision` /
+  负值 / 非法 cadence / 空 body）；409 VERSION_CONFLICT（`expected_revision` 与服务端不一致，
+  body `{"error":{"code":"VERSION_CONFLICT",...}}`）。
+
+## 14.4 GET /echoes/current
+
+受保护。读取「当前回响」，必要时按 cadence 生成新行。HTTP 语义：**一切空态都返回 200 + 显式空负载**，
+不报错。
+
+### 判定顺序（服务端确定性算法）
+
+1. 读 settings（无行取默认）。`enabled=false` → 空负载（仅 enabled/cadence/revision）。
+2. 取该用户最近一条 echo 行（任意 status）：
+   - 是 `open` 且未超窗（now < created_at + cadence 步长）→ **复用该 open**，返回它的卡片
+     （重复读取/通知点击得到同一 `echo.id`）；
+   - 是 `open` 但超窗 → 先更新为 `expired`，再走节奏门；
+3. 节奏门（锚 = 最近一条 echo 行的 `created_at`）：now 仍在 created_at + 步长之前 →
+   空负载 + `next_due_at`（此时没有新 open 产生）；
+4. 创建下一回响：选择候选记忆（见 14.5）；无候选 → 空负载 + `empty_reason="no_candidates"`；
+   有候选 → 插入一条 `open` 并返回其卡片。
+
+### 响应 `200`（卡片态）
+
+```json
+{
+  "enabled": true,
+  "cadence": "daily",
+  "revision": 1,
+  "echo": {
+    "id": "0d8f2c1a-...",
+    "status": "open",
+    "reason": { "code": "pinned", "text": "这条记忆被你置顶过，适合专门回看" },
+    "memory": {
+      "capture_id": "a1b2c3d4-...",
+      "kind": "text",
+      "title": "关于回响的设计",
+      "summary": "…",
+      "primary_type": "idea",
+      "captured_at": "2026-08-01T09:00:00Z",
+      "is_pinned": true
+    },
+    "created_at": "2026-09-01T09:00:00Z"
+  },
+  "request_id": "6f9b2..."
+}
+```
+
+`memory.capture_id` 是深链目标：客户端「点通知/点卡片 → /memories/:captureId」。
+
+### 响应 `200`（三种空态，`echo` 缺省）
+
+```json
+{ "enabled": false, "cadence": "daily", "revision": 0, "request_id": "..." }
+{ "enabled": true, "cadence": "daily", "revision": 1,
+  "next_due_at": "2026-09-02T09:00:00Z", "request_id": "..." }
+{ "enabled": true, "cadence": "daily", "revision": 1,
+  "empty_reason": "no_candidates", "request_id": "..." }
+```
+
+客户端据此分四态：disabled / off_period（有 `next_due_at`）/ no_candidates / loaded。
+
+### 候选选择与原因（14.5）
+
+候选：`captures` JOIN `memory_cards`，需 `captures.deleted_at IS NULL AND lifecycle_status='active'`
+且卡片 `processing_status='ready'` 且标题非空；排除近窗已回响的卡片
+（`not_relevant` 90 天内，其余 status 14 天内不再回响同一卡片）。
+排序：`is_pinned DESC` → 最近回响时间 ASC（NULLS FIRST，未回响过优先）→ `captured_at ASC` → `id ASC`，
+LIMIT 1。确定性、无推荐引擎。
+
+`reason_code` 分类（确定性小集合）：
+
+| code | 触发条件 | 文案（服务端实时渲染） |
+|---|---|---|
+| first_echo | 该用户尚无任何历史回响 | 从你较早记下、还没回看过的记忆开始 |
+| pinned | 该卡片被置顶 | 这条记忆被你置顶过，适合专门回看 |
+| oldest | 有历史回响但该卡片从未回响 | 这是你较早记下、还没有回看过的想法 |
+| reminder | 其余情况（冷却期后再回来） | 距离上次看到它已经过了一段时间，再想想也许有新角度 |
+
+## 14.6 POST /echoes/:echoID/feedback
+
+受保护。对当前 open 回响提交完成/稍后/无关反馈；成功后该行离开 open，下一次读取按 14.4
+节奏门生成下一条。
+
+请求体：
+
+```json
+{ "verdict": "done" }
+```
+
+`verdict` ∈ `done` | `later` | `not_relevant`。
+
+状态迁移：`open → {done, later, not_relevant}`；服务端侧由读取时完成 `open → expired`。
+
+响应 `200`：
+
+```json
+{ "echo_id": "0d8f2c1a-...", "status": "done",
+  "next_due_at": "2026-09-02T09:00:00Z", "request_id": "..." }
+```
+
+`next_due_at` = 该行 `created_at` + cadence 步长，供客户端展示「下次回响」空态。
+
+错误：401 UNAUTHORIZED；400 INVALID_ARGUMENT（`echo_id` 路径参数非法 / 缺 `verdict` /
+非法 verdict）；404 NOT_FOUND（echo 不存在或属于其他用户）；**409 VERSION_CONFLICT
+（echo 已非 open —— 其他设备已处理 / 已过期）**。
+
+## 14.7 错误码与冻结
+
+本组接口只使用既有冻结错误码：UNAUTHORIZED / INVALID_ARGUMENT / NOT_FOUND /
+VERSION_CONFLICT / INTERNAL；**不新增错误码**。
+
+## 14.8 R11 自动化证据
+
+- internal/api/echo_handler_test.go：settings GET/PATCH（开启/改 cadence/revision CAS 409/
+  enabled=false→空）、current 卡片态与三种空态、feedback done/later 200、404 跨用户、409 非 open；
+- internal/api/r11_echo_integration_test.go（真实 PG）：默认关闭 → 开启 daily → seed 2 卡片
+  → current 两次同 echo.id 且行数恰 1 → feedback done → off_period 行数仍 1 → 重复反馈 409 →
+  SQL 前移 created_at 2 天 → 出新 open 且选中另一卡片；not_relevant 后 90 天排除生效；跨用户隔离。
+- 前端 test/features/echo/：echo_api / echo_notifier / echo_settings_notifier / echo_screen /
+  echo_settings_screen / echo_scheduler + test/widget_test.dart 深链（通知 → /memories/:captureId）。
+

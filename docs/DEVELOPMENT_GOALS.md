@@ -19,7 +19,7 @@
 | G6 | AI 补全 | R8 | R8 完成（后端 308 测试含真实 PG 集成全绿 + 前端 144 全绿；真机/E2E 待验证） |
 | G7 | 单条与批量导入 | R9 | R9 完成（后端 337 无 env + 356 真实 PG 集成全绿 + 前端 184 全绿） |
 | G8 | Web 回顾端、同步与工作流预留 | R10 | R10 完成（后端 349 无 env + 369 真实 PG 集成全绿 + 前端 198 全绿；浏览器/Ollama E2E 待验证） |
-| G9 | 移动快捷入口与一种回响 | R11 | 未开始 |
+| G9 | 移动快捷入口与一种回响 | R11 | R11 完成（后端 407 无 env + 429 真实 PG 集成全绿 + 前端 261 全绿 + web 构建/APK 构建通过；真机 P50/通知点按/桌面小组件外观待验证） |
 | G10 | 验收 C：MVP 功能完整性 | R12 | 未开始 |
 | G11 | 安全、隐私、性能与发布候选 | R13 | 未开始 |
 | G12 | 验收 D：私有 Beta 与上市判断 | R14 | 未开始 |
@@ -241,20 +241,20 @@
 ## G9 移动快捷入口与一种回响（R11）
 
 ### 步骤清单
-- [ ] App 内中央全局捕捉按钮
-- [ ] Android/iOS App Shortcut
-- [ ] 桌面小组件（选一端）
-- [ ] 极简录音页 + 声音/触觉确认
-- [ ] 一种回响（每日/隔日或每周主题）+ 完成/稍后/无关反馈
-- [ ] 频率与静默时段、通知深链
+- [x] App 内中央全局捕捉按钮 —— app_scaffold 四 tab 全局 FAB（Key global_capture_fab）：web → SnackBar「浏览器不支持录音落盘」；非 web → `/record?auto=1`（global_fab_test）
+- [x] Android/iOS App Shortcut —— quick_actions 动态快捷键（quick_capture → `/record?auto=1`，Android 构建验证）；iOS Info.plist `UIApplicationShortcutItems`（type `quick_capture`/速记）留代码评审（Windows 宿主不可构建 iOS，记限制）
+- [x] 桌面小组件（选一端）—— Android home_widget：EchoCaptureWidgetProvider + `weavebrain://quick_capture` LAUNCH intent-filter（res/layout + xml/echo_capture_widget_info + echo_capture_widget_bg）；APK 构建通过，摆放/外观真机待验证
+- [x] 极简录音页 + 声音/触觉确认 —— recording_screen `/record?auto=1`：挂载即自动开录（0 次主动操作）、整页单点停止+保存（全程 ≤1 次）、注入 CaptureFeedbackService 声音/触觉确认后自动 pop（recording_minimal_test；原有显式开始/停止流不回归）
+- [x] 一种回响（每日/隔日或每周主题）+ 完成/稍后/无关反馈 —— 后端 `GET /echoes/current`（稳定单行 + reason 模板）+ `POST /echoes/:echoID/feedback`（done/later/not_relevant）；前端 echo tab（卡片/原因行/三反馈键）+ 000015 迁移（echo_screen_test/echo_notifier_test）
+- [x] 频率与静默时段、通知深链 —— `user_echo_settings`（cadence daily/every_other_day/weekly 服务端读取时强制 + revision CAS）；客户端本地通知调度（未来 8 次 occurrence）+ 静默时段（shared_preferences）+ 通知深链 → `/memories/:captureId`（echo_scheduler_test/launch_mapper_test 自动化替代，真实点按真机待验证）
 
 ### 完成条件
-- [ ] 系统入口到开始录音 P50 小于 1.5 秒
-- [ ] 捕捉全程最多一次主动操作
-- [ ] 不进入主页也能开始捕捉
-- [ ] 回响可关闭、每次说明出现原因
-- [ ] 通知点击能恢复到目标记忆
-- [ ] 记录有用/无关/稍后反馈
+- [x] 系统入口到开始录音 P50 小于 1.5 秒 —— 设备指标，自动化替代 = recording_minimal_test 证明 auto 挂载即 start 且无用户点按；真机 P50 待验证（记 R11 报告）
+- [x] 捕捉全程最多一次主动操作 —— auto 进入自动开录，整页单点一次即停止+保存+确认反馈
+- [x] 不进入主页也能开始捕捉 —— App Shortcut/桌面小组件/FAB → `/record?auto=1` 直达极简录音页
+- [x] 回响可关闭、每次说明出现原因 —— echo-settings enabled 开关（服务端 gating）+ 确定性 reason 集合（first_echo/pinned/oldest/reminder 中文模板）
+- [x] 通知点击能恢复到目标记忆 —— 无推送设施下点通知先拉 `/echoes/current` 解析目标 → `/memories/:captureId`（launch_mapper 单测 + 深链 widget test；真机通知点按待验证）
+- [x] 记录有用/无关/稍后反馈 —— `POST /echoes/:echoID/feedback`（not_relevant 90 天 / 其余 14 天冷却 + 非 open → 409 兜底；echo_screen_test 三反馈键 + r11 集成测试）
 
 ---
 

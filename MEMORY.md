@@ -1389,3 +1389,64 @@
 ### 下一步
 - 合并 R10（合并提交）
 - G9 / R11：移动快捷入口与一种回响（App 内全局捕捉按钮、App Shortcut、桌面小组件、极简录音页、一种回响 + 完成/稍后/无关反馈、频率与静默时段、通知深链）
+
+---
+
+## Sprint 23: R11 移动快捷入口与一种回响（G9）
+**状态**: ✅ 已完成（后端 407 无 env + 429 真实 PG 集成全绿 + 前端 261 全绿 + web 构建/APK 构建通过；真机 P50/通知点按/桌面小组件外观待验证）
+
+### 已完成
+
+#### 后端：回响（按需生成 + 服务端设置 + 反馈）
+- [x] 迁移 000015_create_echoes_and_echo_settings.sql —— `user_echo_settings`（PK user_id、enabled DEFAULT false、cadence CHECK daily/every_other_day/weekly、revision CAS、created_at/updated_at）+ `user_echoes`（id、user_id、capture_id、status CHECK open/done/later/not_relevant/expired、reason_code CHECK first_echo/pinned/oldest/reminder、resolved_at；复合 FK (user_id,capture_id) REFERENCES captures(user_id,id) CASCADE）+ idx_user_echoes_user_created / idx_user_echoes_user_capture + idx_user_echo_settings_revision；Down 先 user_echoes 再 user_echo_settings；迁移契约测试 000015_echoes_migration_contract_test.go（断言两表/两 CHECK/复合 FK/三索引/Down 顺序）
+- [x] entity/echo.go —— EchoCadence/EchoStatus/EchoFeedbackVerdict/EchoReasonCode 常量 + DefaultUserEchoSettings（enabled=false, cadence=daily）+ UserEchoSettings/Echo/EchoMemory/EchoCandidate/EchoReason 结构；reason_text 不落库，读取时按中文模板实时渲染（first_echo「从你较早记下、还没回看过的记忆开始」/ pinned「这条记忆被你置顶过…」/ oldest「这是你较早记下、还没有回看过的想法」/ reminder「距离上次看到它已经过了一段时间…」）
+- [x] repository —— interface.go 追加 `UserEchoSettingsRepository`（GetByUserID nil 无行 / Create revision 1 ON CONFLICT DO NOTHING / Update CAS revision+1 RETURNING）+ `EchoRepository`（Latest / FetchMemory / PickCandidate / Create / UpdateStatus）；echo_settings_repository.go 逐字镜像 ai_settings_repository.go 对 `user_echo_settings`；echo_repository.go PickCandidate 确定性 SQL（captures ⋈ memory_cards 过滤 deleted/lifecycle/processing_status/title 非空 + not_relevant 90 天 / 其余 14 天冷却 → ORDER BY is_pinned DESC, 最近回响 ASC NULLS FIRST, captured_at ASC, id ASC LIMIT 1 + EXISTS HasPriorEcho）；哨兵 ErrEchoSettingsVersionConflict/ErrEchoNotFound/ErrEchoNotOpen（镜像 ErrAISettingsVersionConflict）；store.go DBStore 增 EchoSettings + Echo 并在 NewFromPool/BeginTx 实例化
+- [x] service/echo_service.go —— `CurrentEcho`：settings（无行 Default；!Enabled → {Enabled:false}）；latest open 未超窗 → 返回该回响（跨打开/通知点击稳定）；超窗 → UpdateStatus(expired)；节奏门（锚 = 最近任意 status 行的 created_at，步进 1/2/7 天）未到 → off-period 空 + NextDueAt；PickCandidate 无候选 → no_candidates 空；有 → reason classify（无历史回响→first_echo；IsPinned→pinned；HasPriorEcho==false→oldest；否则 reminder）→ Create(open)。`Feedback`（非本用户/不存在 → ErrEchoNotFound；非 open → ErrEchoNotOpen；UpdateStatus(done/later/not_relevant) 返回新 status + next_due_at）。GetSettings/UpdateSettings 镜像 AISettingsService（cadence 校验 + revision CAS；新用户 Create revision 1）；service.go New 装配 `Echo: NewEchoService(store.EchoSettings, store.Echo)`
+- [x] api/echo_handler.go（镜像 ai_settings_handler）—— GET /api/v3/echoes/current → `{enabled,cadence,revision,echo?{id,status,reason{code,text},memory{...含 capture_id 深链},created_at},next_due_at?,empty_reason?,request_id}`；POST /api/v3/echoes/:echoID/feedback body {verdict} → `{echo_id,status,next_due_at,request_id}`；GET/PATCH /api/v3/users/me/echo-settings（revision CAS 部分更新）；错误映射 401/404/409（反馈非 open / settings CAS miss）/400（verdict/cadence 非法、缺 expected_revision）；server.go protectedV3 装配（services.Echo != nil 门控）；**不新增冻结错误码**
+- [x] 集成测试 r11_echo_integration_test.go（真实 PG env 门控，r10 harness 镜像）—— TestR11EchoSettingsGatingAndFeedback（默认 disabled → current 空；PATCH 开 daily；seed 2 ready 卡片 → current 两次同 echo.id 且 user_echoes 行数恰 1；feedback done → 再 current 得 off-period 行数仍 1；同 echo 二次 feedback → 409；SQL 前移 created_at 2 天 → current 出新 open 行数 2 且选中另一卡片）+ TestR11EchoNotRelevantAndCrossUser（A not_relevant 后前移 100 天 → 换另一卡片证明 90 天排除生效；B 独立不受 A 影响）
+
+#### 前端：全局捕捉 FAB + App Shortcut + 极简录音 + 回响 feature
+- [x] pubspec 新增 flutter_local_notifications / timezone / flutter_timezone / shared_preferences / flutter_quick_actions / home_widget（平台调用全经注入服务 + kIsWeb 早退，web/test 不触碰平台通道）
+- [x] lib/shared/native/ —— local_notification_service.dart（接口 + FlutterLocalNotificationsService + noop provider：init/requestPermission/cancelAll/schedule/getLaunchPayload）、timezone_service.dart、quick_actions_service.dart（quick_capture → LaunchRequest.quickCapture）、home_widget_service.dart、haptics_service.dart（CaptureFeedbackService：startTapped/saved；web/test recorder fake）；测试一律 override
+- [x] 通知深链 / 启动路由 —— LaunchRequest 模型 + launchMapper 纯函数（source=notification 无 payload → 先 GET /echoes/current 有 echo → /memories/{captureId} 无 → /echo；source=shortcut/widget/FAB → /record?auto=1）；main.dart 读三冷启动源 + 后台流归一化写 launchRequestProvider；_LaunchApplier（builder 内 ConsumerStatefulWidget）auth 就绪后 go 目标路由并清空；/settings/echo 子路由；回响 tab 游客可进正文显「请先登录以查看回响」
+- [x] 全局捕捉 FAB —— app_scaffold floatingActionButton（Key global_capture_fab）四 tab 可见：web → SnackBar「浏览器不支持录音落盘…」；非 web → push `/record?auto=1`
+- [x] 极简录音页 + 声音/触觉确认 —— recording_screen 读 `auto==1`：post-frame startIfIdle()（新增便捷方法 idle+isSupported 才 start）、隐藏取消确认 AppBar affordance、全屏点按面（Key minimal_record_tap_target）、recording 中整页单点一次 → stop()+保存、saved 后经注入 CaptureFeedbackService.saved() 确认反馈（start 首帧 startTapped()）、约 600ms 自动 pop；auto!=1 保持显式流不回归；controller 不加硬接线反馈；capture_providers 增 captureFeedbackServiceProvider
+- [x] 回响 feature（lib/features/echo/）—— echo_api.dart（模型蛇形 + EchoGateway/EchoSettingsGateway + Provider 实现）、echo_notifier.dart（EchoState sealed Loading/Guest/Disabled/Empty/Loaded/Error；load/反馈后重载；settings notifier CAS + 409「设置已在其他设备修改」）、echo_screen.dart 替换占位页（游客 CTA/关闭去设置/empty 空态 + next_due/loaded 卡片 + 原因行「这次回响：{reason.text}」+ 完成/稍后/无关 Key echo_feedback_done/_later/_not_relevant + 点卡片 → /memories/{captureId}）、echo_settings_screen.dart（enabled SwitchListTile Android≥13 首次请求通知权限 + cadence SegmentedButton + 本地区块通知时间/静默时段存 shared_preferences 不上送 + 冲突警示）、echo_scheduler.dart（disabled→cancelAll；1/2/7 天排未来 8 次 occurrence 于本地 HH:mm；静默窗跳过；inexactAllowWhileIdle 免 SCHEDULE_EXACT_ALARM；触发点 = 鉴权启动/PATCH 成功/时刻或静默变更）；settings_screen 增「回响与提醒」入口
+- [x] 前端测试 —— widget_test.dart 增 6 个 fake override；新增 echo_api_test / echo_notifier_test（guest/disabled/empty/loaded/feedback/error）/ echo_settings_notifier_test（CAS+409）/ echo_screen_test（三反馈键/原因文案/卡跳详情/各状态/error 重试）/ echo_settings_screen_test / echo_scheduler_test（注入时钟 occurrence 数学/静默跳过/1-2-7 天/cancel-before）/ recording_minimal_test（auto 无点击自动开录 + 整页单点保存 1 条 + saved 反馈 + 自动 pop）/ global_fab_test（四 tab 可见、tap→/record、web→SnackBar）/ launch_mapper_test + 深链 widget test（echo → /memories/c1 详情；guest → /login）；**两处关键修复**：Riverpod build() 写 `late final` 字段 → 改非 final `late`（gateway provider 变化重跑崩溃）；widget test 重复 pump 新 ProviderScope 复用 element initState 不重跑 → 单挂可变 fake
+
+#### Android 原生（+ iOS 留代码）
+- [x] build.gradle.kts 开 coreLibraryDesugaring + `desugar_jdk_libs:2.1.4`（flutter_local_notifications 必需）；AndroidManifest POST_NOTIFICATIONS/RECEIVE_BOOT_COMPLETED + home_widget LAUNCH intent-filter + EchoCaptureWidgetProvider receiver（APPWIDGET_UPDATE @xml/echo_capture_widget_info）+ ScheduledNotificationReceiver/ScheduledNotificationBootReceiver
+- [x] res/drawable/echo_capture_widget_bg.xml + res/layout/echo_capture_widget.xml（LinearLayout id echo_capture_widget_root：速记 + 点按即开始录音）+ res/xml/echo_capture_widget_info.xml + kotlin EchoCaptureWidgetProvider.kt（extends HomeWidgetProvider 4 参 onUpdate；RemoteViews + HomeWidgetLaunchIntent.getActivity → weavebrain://quick_capture）
+- [x] iOS 代码标注（本机 Windows 不可构建）：Info.plist UIApplicationShortcutItems（type quick_capture/速记）+ AppDelegate.swift UNUserNotificationCenter.current().delegate（前台通知展示）；plist plistlib 校验通过；quick_actions iOS 插件自注册 scene delegate 无需改动
+
+### 技术决策
+- **回响 = 按需生成 + 客户端本地通知**（用户批准）：无推送设施、不依赖 Temporal；`GET /echoes/current` 读取时服务端选出当前回响（稳定单行 + 确定性 reason）并落行；提醒由客户端按 cadence 本地通知触发；点通知 → 回 App 拉当前回响 → 深链 /memories/:captureId
+- **回响设置 = 服务端**：user_echo_settings 镜像 user_ai_settings（revision CAS）；cadence 服务端读取时强制，多设备/漂移真值归服务端；投递时刻/静默时段放客户端仅用于调度
+- **小组件 = Android 端**（home_widget）；iOS 仅留代码标注未验证
+- **极简录音 ≤1 次主动操作**：进入自动开录（0 次）+ 整页单点一次停止+保存+确认 = 全程 ≤1 次；确认反馈 screen 驱动 + 注入服务（controller 不加硬接线保持既有测试不变）
+- **通知只是邀请**：是否实际到期由打开 App 后 GET /echoes/current 判定 → 通知点按目标记忆若跨设备已消费则落 /echo 服务端真值（记为限制）
+- quick_actions Android 用动态快捷键（intent extra 非 manifest action）；iOS 插件自注册 delegate 无需 AppDelegate 改动
+- 本轮明确不建：推送设施、Temporal 回响工作流、永久监听、watch/耳机/车机、第二类回响、复杂个性化、登录后待办路径冲刷
+
+### 验证
+- [x] `go build ./...` / `go vet ./...` 通过
+- [x] `go test ./...`（无 env）**407** 全绿（R10 349 → +58）
+- [x] `WEAVEBRAIN_TEST_DATABASE_URL=... go test ./...`（真实 PG）**429** 全绿 0 SKIP（R10 369 → +60）—— r11 集成测试在真实 PG 实际运行（含 outbox orphan / soak 回归）
+- [x] `dart analyze lib test` 0 issue；`flutter test` **261** 全绿（R10 198 → +63）
+- [x] `flutter build web --release` 成功（wasm dry-run 仅警告）
+- [x] `flutter build apk --debug` 成功（Android §4 native 落地后；首失败根因 = 缺 core library desugaring，已修复）
+
+### 报告
+- [x] docs/round-reports/R11_REPORT.md
+- [x] docs/API_V3_CONTRACT.md §14（回响接口：设计决策/数据模型/GET settings/PATCH settings/GET echoes/current 稳定算法 + 卡片与三种空 JSON 示例/候选选择与 reason 模板/feedback transitions/冻结错误码/自动化证据）
+- [x] docs/DEVELOPMENT_GOALS.md G9（6 步 + 6 完成条件全部勾选；顶层表 G9 → R11 完成）
+
+### 已知限制
+- P50<1.5s = 设备指标，自动化替代 = recording_minimal_test（auto 挂载即 start 无用户点按）；真机 P50/真实通知点按/桌面小组件摆放与外观待验证（Android 构建为执行证据，iOS 全项不可本机构建）
+- 无推送设施：通知点击 → 记忆恢复依赖打开 App 后拉 /echoes/current 解析；跨设备已消费则落 /echo 真值
+- 回响当前为单卡片 + 确定性 reason 集合（无推荐引擎）；开启后首次 GET 即生成首条（cadence 锚创建时刻，演示友好）
+- flutter_local_notifications 本地通知调度在 web 不可用（kIsWeb 早退，web 只读不提醒）；OEM 后台限制记文档不深解
+
+### 下一步
+- 合并 R11（合并提交）
+- G10 / R12：验收 C — MVP 功能完整性（R3/R7 验收项无回归 + 手机/Web E2E + 补全无静默覆盖 + 导入无回滚重复 + 工作流无意外执行 + P0/P1 缺陷关闭）

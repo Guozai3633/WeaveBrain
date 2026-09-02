@@ -49,6 +49,21 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- 桌面「速记」快捷入口（iOS 9+ Home Screen Quick Action）。
+	     type 须与 Dart quickCaptureActionType 一致（= 'quick_capture'）。 -->
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>quick_capture</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>速记</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>开始语音捕捉</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeCompose</string>
+		</dict>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

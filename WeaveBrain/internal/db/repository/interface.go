@@ -206,6 +206,49 @@ type UserAISettingsRepository interface {
 	Update(ctx context.Context, settings *entity.UserAISettings, expectedRevision int64) (int64, error)
 }
 
+// UserEchoSettingsRepository persists per-user echo switches (enabled +
+// cadence) with optimistic-concurrency revision tracking, mirroring the AI
+// settings pattern. Echo is off by default (the user opts in).
+type UserEchoSettingsRepository interface {
+	// GetByUserID returns the settings row, or nil if the user has no row yet.
+	GetByUserID(ctx context.Context, userID uuid.UUID) (*entity.UserEchoSettings, error)
+	// Create inserts a fresh row at revision 1 (the first write from the
+	// implicit revision-0 default). A concurrent create for the same user
+	// returns ErrEchoSettingsVersionConflict.
+	Create(ctx context.Context, settings *entity.UserEchoSettings) error
+	// Update applies a settings row guarded by the expected revision
+	// (optimistic concurrency). It returns the new revision on success.
+	Update(ctx context.Context, settings *entity.UserEchoSettings, expectedRevision int64) (int64, error)
+}
+
+// EchoRepository persists echo rows (one resurfacing = one memory card plus
+// its reason). The service keeps a stable single-row "current echo" discipline
+// over these primitives; the repository itself is a thin CRUD layer.
+type EchoRepository interface {
+	// Latest returns the user's most recent echo row (any status), or nil when
+	// the user has no echo rows yet. It anchors the cadence gate: the next
+	// echo is due cadence-days after this row's created_at.
+	Latest(ctx context.Context, userID uuid.UUID) (*entity.Echo, error)
+	// GetByID returns an echo belonging to the user, or ErrEchoNotFound when
+	// the echo does not exist or belongs to another user.
+	GetByID(ctx context.Context, userID uuid.UUID, echoID uuid.UUID) (*entity.Echo, error)
+	// Create inserts a new echo row with status open.
+	Create(ctx context.Context, echo *entity.Echo) error
+	// UpdateStatus transitions a currently-open echo to the given status,
+	// recording resolved_at. Only open rows can transition; a call on a row
+	// that is not open returns ErrEchoNotOpen.
+	UpdateStatus(ctx context.Context, userID uuid.UUID, echoID uuid.UUID, status entity.EchoStatus, resolvedAt *time.Time) error
+	// FetchMemory returns the compact memory payload an echo points at, or
+	// ErrEchoNotFound when the capture is not visible (deleted).
+	FetchMemory(ctx context.Context, userID uuid.UUID, captureID uuid.UUID) (*entity.EchoMemory, error)
+	// PickCandidate deterministically selects the next capture eligible to echo
+	// (nil, nil when nothing is eligible). now anchors the cooldown windows:
+	// not_relevant echoes exclude a capture for 90 days, any other resolved
+	// status for 14 days. Selection orders pinned first, then least-recently
+	// echoed, then oldest capture, then capture id as the tiebreaker.
+	PickCandidate(ctx context.Context, userID uuid.UUID, now time.Time) (*entity.EchoCandidate, error)
+}
+
 // OutboxRepository manages the background processing lifecycle of
 // CaptureOutbox events consumed by the enrichment worker.
 type OutboxRepository interface {

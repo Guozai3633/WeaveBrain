@@ -8,6 +8,7 @@ import '../features/capture/ui/capture_screen.dart';
 import '../features/capture/ui/recording_screen.dart';
 import '../features/capture/ui/transcript_edit_screen.dart';
 import '../features/echo/ui/echo_screen.dart';
+import '../features/echo/ui/echo_settings_screen.dart';
 import '../features/ideas/ui/idea_detail_screen.dart';
 import '../features/ideas/ui/ideas_screen.dart';
 import '../features/imports/ui/import_screen.dart';
@@ -57,7 +58,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/record',
-        builder: (context, state) => const RecordingScreen(),
+        builder: (context, state) => RecordingScreen(
+          autoStart: state.uri.queryParameters['auto'] == '1',
+        ),
       ),
       GoRoute(
         path: '/captures/:captureId/transcript',
@@ -157,6 +160,10 @@ final routerProvider = Provider<GoRouter>((ref) {
                   GoRoute(
                     path: 'ai',
                     builder: (context, state) => const AISettingsScreen(),
+                  ),
+                  GoRoute(
+                    path: 'echo',
+                    builder: (context, state) => const EchoSettingsScreen(),
                   ),
                 ],
               ),

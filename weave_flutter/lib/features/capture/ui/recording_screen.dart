@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -5,17 +7,83 @@ import 'package:go_router/go_router.dart';
 import '../domain/audio_capture_controller.dart';
 import '../domain/capture_providers.dart';
 
-class RecordingScreen extends ConsumerWidget {
-  const RecordingScreen({super.key});
+/// 语音录音页。非 auto 模式保持既有显式开始/停止流；auto 模式（App
+/// Shortcut / 桌面小组件 / 全局 FAB 进入，`/record?auto=1`）进入即自动开录，
+/// 整页轻触一次停止保存，并触发声音/触觉确认——全程最多一次主动操作。
+class RecordingScreen extends ConsumerStatefulWidget {
+  const RecordingScreen({super.key, this.autoStart = false});
 
-  static const _barCount = 48;
+  final bool autoStart;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<RecordingScreen> createState() => _RecordingScreenState();
+}
+
+class _RecordingScreenState extends ConsumerState<RecordingScreen> {
+  static const _barCount = 48;
+  Timer? _autoPopTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autoStart) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref.read(audioCaptureControllerProvider.notifier).startIfIdle();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _autoPopTimer?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleAutoPop() {
+    _autoPopTimer?.cancel();
+    _autoPopTimer = Timer(const Duration(milliseconds: 600), () {
+      if (!mounted) return;
+      if (context.canPop()) {
+        context.pop();
+      } else {
+        // 录音页可能以根路由打开（shortcut/widget 冷启动直达）。
+        context.go('/capture');
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final controller = ref.read(audioCaptureControllerProvider.notifier);
     final state = ref.watch(audioCaptureControllerProvider);
     final scheme = Theme.of(context).colorScheme;
     final isSupported = controller.isSupported;
+    final auto = widget.autoStart;
+
+    ref.listen<AudioCaptureState>(audioCaptureControllerProvider, (previous, next) {
+      if (!auto) return;
+      final feedback = ref.read(captureFeedbackServiceProvider);
+      final wasRecording = previous?.phase == AudioCapturePhase.recording;
+      final wasSaved = previous?.phase == AudioCapturePhase.saved;
+      if (next.phase == AudioCapturePhase.recording && !wasRecording) {
+        feedback.startTapped();
+      }
+      if (next.phase == AudioCapturePhase.saved && !wasSaved) {
+        feedback.saved();
+        _scheduleAutoPop();
+      }
+    });
+
+    final autoRecording = auto && state.phase == AudioCapturePhase.recording;
+    final autoSaved = auto && state.phase == AudioCapturePhase.saved;
+
+    final closeAffordance = IconButton(
+      tooltip: '取消录音',
+      onPressed: state.isRecording || state.isSaving
+          ? () => _confirmCancel(context, controller)
+          : () => context.pop(),
+      icon: const Icon(Icons.close),
+    );
 
     return PopScope(
       canPop: !state.isRecording && !state.isSaving,
@@ -29,35 +97,90 @@ class RecordingScreen extends ConsumerWidget {
         appBar: AppBar(
           backgroundColor: Colors.transparent,
           foregroundColor: Colors.white,
-          leading: IconButton(
-            tooltip: '取消录音',
-            onPressed: state.isRecording || state.isSaving
-                ? () => _confirmCancel(context, controller)
-                : () => context.pop(),
-            icon: const Icon(Icons.close),
-          ),
+          leading: autoRecording ? null : closeAffordance,
         ),
         body: SafeArea(
-          child: Column(
-            children: [
-              const Spacer(flex: 2),
-              _StatusMessage(state: state, isSupported: isSupported),
-              const SizedBox(height: 24),
-              _TimerText(elapsed: state.elapsed),
-              const SizedBox(height: 32),
-              _Waveform(amplitude: state.amplitude, active: state.isRecording),
-              const Spacer(flex: 3),
-              _BottomControls(
-                controller: controller,
-                state: state,
-                isSupported: isSupported,
-                scheme: scheme,
-              ),
-              const SizedBox(height: 32),
-            ],
-          ),
+          child: autoRecording
+              ? GestureDetector(
+                  key: const Key('minimal_record_tap_target'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => controller.stop(),
+                  child: _autoRecordingContent(state, isSupported),
+                )
+              : _content(controller, state, isSupported, scheme, autoSaved: autoSaved),
         ),
       ),
+    );
+  }
+
+  Widget _autoRecordingContent(AudioCaptureState state, bool isSupported) {
+    return Column(
+      children: [
+        const Spacer(flex: 2),
+        _StatusMessage(state: state, isSupported: isSupported),
+        const SizedBox(height: 24),
+        _TimerText(elapsed: state.elapsed),
+        const SizedBox(height: 32),
+        _Waveform(amplitude: state.amplitude, active: state.isRecording),
+        const Spacer(flex: 3),
+        const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.touch_app, color: Colors.white70, size: 18),
+            SizedBox(width: 8),
+            Text(
+              '点按任意处结束并保存',
+              style: TextStyle(color: Colors.white70, fontSize: 15),
+            ),
+          ],
+        ),
+        const SizedBox(height: 48),
+      ],
+    );
+  }
+
+  Widget _content(
+    AudioCaptureController controller,
+    AudioCaptureState state,
+    bool isSupported,
+    ColorScheme scheme, {
+    required bool autoSaved,
+  }) {
+    if (autoSaved) {
+      return Column(
+        children: [
+          const Spacer(flex: 2),
+          const Icon(Icons.check_circle, color: Color(0xFF34D399), size: 56),
+          const SizedBox(height: 16),
+          const Text(
+            '已安全保存',
+            style: TextStyle(
+              color: Color(0xFF34D399),
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const Spacer(flex: 3),
+        ],
+      );
+    }
+    return Column(
+      children: [
+        const Spacer(flex: 2),
+        _StatusMessage(state: state, isSupported: isSupported),
+        const SizedBox(height: 24),
+        _TimerText(elapsed: state.elapsed),
+        const SizedBox(height: 32),
+        _Waveform(amplitude: state.amplitude, active: state.isRecording),
+        const Spacer(flex: 3),
+        _BottomControls(
+          controller: controller,
+          state: state,
+          isSupported: isSupported,
+          scheme: scheme,
+        ),
+        const SizedBox(height: 32),
+      ],
     );
   }
 
@@ -180,8 +303,7 @@ class _Waveform extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          for (var i = 0; i < RecordingScreen._barCount; i++)
-            _bar(i),
+          for (var i = 0; i < _RecordingScreenState._barCount; i++) _bar(i),
         ],
       ),
     );

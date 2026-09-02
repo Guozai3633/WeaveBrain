@@ -81,6 +81,16 @@ class SettingsScreen extends ConsumerWidget {
         ),
         const Divider(),
 
+        // --- Echo & Reminders ---
+        ListTile(
+          leading: const Icon(Icons.notifications_active_outlined),
+          title: const Text('回响与提醒'),
+          subtitle: const Text('让旧记忆定期回来，声音/触觉速记入口'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/settings/echo'),
+        ),
+        const Divider(),
+
         // --- Import Old Memories ---
         ListTile(
           leading: const Icon(Icons.file_download_outlined),

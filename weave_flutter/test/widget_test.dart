@@ -7,11 +7,16 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:sembast/sembast_memory.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:weave_flutter/features/auth/ui/login_screen.dart';
+import 'package:weave_flutter/features/capture/data/audio_file_storage.dart';
+import 'package:weave_flutter/features/capture/data/audio_file_storage_service.dart';
+import 'package:weave_flutter/features/capture/data/audio_recorder.dart';
 import 'package:weave_flutter/features/capture/data/sembast_local_capture_store.dart';
 import 'package:weave_flutter/features/capture/domain/capture_providers.dart';
 import 'package:weave_flutter/features/capture/domain/local_capture.dart';
+import 'package:weave_flutter/features/echo/data/echo_api.dart';
 import 'package:weave_flutter/features/imports/data/import_api.dart';
 import 'package:weave_flutter/features/memories/data/memory_api.dart';
 import 'package:weave_flutter/features/platform/data/capabilities_api.dart';
@@ -19,6 +24,10 @@ import 'package:weave_flutter/features/settings/data/ai_settings_api.dart';
 import 'package:weave_flutter/features/settings/ui/settings_screen.dart';
 import 'package:weave_flutter/features/workflows/ui/workflow_list_screen.dart';
 import 'package:weave_flutter/main.dart';
+import 'package:weave_flutter/shared/native/launch_request.dart';
+import 'package:weave_flutter/shared/native/native_services.dart';
+
+import 'support/echo_fakes.dart';
 
 // ---- 测试辅助：记忆网关替身 ----
 
@@ -250,6 +259,46 @@ MemoryDetail _detail(String captureId) {
   );
 }
 
+class _FakeAudioRecorder implements AudioRecorder {
+  _FakeAudioRecorder();
+
+  final List<String> startedPaths = [];
+
+  @override
+  bool get supportsFileRecording => true;
+
+  @override
+  Future<bool> hasPermission() async => true;
+
+  @override
+  Future<void> start({required String path}) async {
+    startedPaths.add(path);
+  }
+
+  @override
+  Stream<double> get amplitude => const Stream<double>.empty();
+
+  @override
+  Future<String?> stop() async =>
+      startedPaths.isEmpty ? null : startedPaths.last;
+
+  @override
+  Future<void> dispose() async {}
+}
+
+class _FakeAudioFileStorage implements AudioFileStorage {
+  @override
+  Future<String> getDirectory() async => '/tmp/widget';
+
+  @override
+  Future<AudioFileMetadata> readMetadata(String filePath) async {
+    return const AudioFileMetadata(sizeBytes: 441000, sha256: 'feedface');
+  }
+
+  @override
+  Future<void> deleteFile(String filePath) async {}
+}
+
 class _FakeCapabilitiesGateway implements CapabilitiesGateway {
   const _FakeCapabilitiesGateway();
 
@@ -279,6 +328,7 @@ Future<_FakeMemoryGateway> _pumpApp(
   List<Override> extraOverrides = const [],
 }) async {
   FlutterSecureStorage.setMockInitialValues(storage ?? {});
+  SharedPreferences.setMockInitialValues({});
   final database = await databaseFactoryMemory.openDatabase('app_widget_test');
   final store = SembastLocalCaptureStore(database);
   final fakeGateway = gateway ?? _FakeMemoryGateway();
@@ -293,6 +343,18 @@ Future<_FakeMemoryGateway> _pumpApp(
         importGatewayProvider.overrideWithValue(_FakeImportGateway()),
         capabilitiesGatewayProvider.overrideWithValue(
           _FakeCapabilitiesGateway(),
+        ),
+        // R11 注入：native 服务 + 回响网关全部换假，避免任何插件通道/真实 HTTP。
+        localNotificationServiceProvider.overrideWithValue(
+          FakeLocalNotificationService(),
+        ),
+        quickActionsServiceProvider.overrideWithValue(FakeQuickActionsService()),
+        homeWidgetServiceProvider.overrideWithValue(FakeHomeWidgetService()),
+        timezoneServiceProvider.overrideWithValue(FakeTimezoneService()),
+        echoGatewayProvider.overrideWithValue(FakeEchoGateway()),
+        echoSettingsGatewayProvider.overrideWithValue(FakeEchoSettingsGateway()),
+        captureFeedbackServiceProvider.overrideWithValue(
+          FakeCaptureFeedbackService(),
         ),
         ...extraOverrides,
       ],
@@ -459,4 +521,109 @@ void main() {
       await tester.pump();
     },
   );
+
+  testWidgets('global capture FAB is present and opens the minimal record', (
+    tester,
+  ) async {
+    final recorder = _FakeAudioRecorder();
+    await _pumpApp(
+      tester,
+      extraOverrides: [
+        audioRecorderDeviceProvider.overrideWithValue(recorder),
+        audioFileStorageProvider.overrideWithValue(_FakeAudioFileStorage()),
+      ],
+    );
+
+    // 全局 FAB 由 AppScaffold 提供，所有 tab 均可见。
+    expect(find.byKey(const Key('global_capture_fab')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('global_capture_fab')));
+    await tester.pumpAndSettle();
+
+    // 极简录音：进入即自动开录，无需任何主动操作。
+    expect(recorder.startedPaths, hasLength(1));
+    expect(find.text('点按任意处结束并保存'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('notification launch resolves an open echo into its memory', (
+    tester,
+  ) async {
+    final gateway = await _pumpApp(
+      tester,
+      storage: {
+        'jwt_token': 'test-token',
+        'user_data': jsonEncode({'id': 'u1', 'display_name': '测试用户'}),
+      },
+      extraOverrides: [
+        echoGatewayProvider.overrideWithValue(
+          FakeEchoGateway(current: makeCurrentLoaded(captureId: 'c1')),
+        ),
+      ],
+    );
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(NavigationBar)),
+    );
+    container.read(launchRequestProvider.notifier).state = const LaunchRequest(
+      LaunchSource.notification,
+    );
+    await tester.pumpAndSettle();
+
+    // 通知 → 拉 /echoes/current → 深链 /memories/c1 → 按 captureId 加载详情。
+    expect(gateway.detailCalls, ['c1']);
+    expect(find.text('记忆详情'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('guest notification launch lands on the echo hub', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(NavigationBar)),
+    );
+    container.read(launchRequestProvider.notifier).state = const LaunchRequest(
+      LaunchSource.notification,
+    );
+    await tester.pumpAndSettle();
+
+    // 游客通知点击 → 落回响 tab（本页游客态展示登录引导）。
+    expect(find.text('登录后开启回响'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('quick capture shortcut launch opens the minimal record', (
+    tester,
+  ) async {
+    final recorder = _FakeAudioRecorder();
+    await _pumpApp(
+      tester,
+      extraOverrides: [
+        audioRecorderDeviceProvider.overrideWithValue(recorder),
+        audioFileStorageProvider.overrideWithValue(_FakeAudioFileStorage()),
+      ],
+    );
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(NavigationBar)),
+    );
+    container.read(launchRequestProvider.notifier).state = const LaunchRequest(
+      LaunchSource.quickCapture,
+    );
+    await tester.pumpAndSettle();
+
+    expect(recorder.startedPaths, hasLength(1));
+    expect(find.text('点按任意处结束并保存'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
 }

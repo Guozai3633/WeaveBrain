@@ -76,6 +76,14 @@ class AudioCaptureController extends Notifier<AudioCaptureState> {
   /// Web cannot persist audio to a file in this round.
   bool get isSupported => !kIsWeb;
 
+  /// 极简录音入口：仅当处于 idle 且设备支持时才自动开录。已经是 recording/
+  /// stopping 时保持现状，避免重复启动。
+  Future<void> startIfIdle() async {
+    final current = state;
+    if (current.phase != AudioCapturePhase.idle || !isSupported) return;
+    await start();
+  }
+
   Future<void> start() async {
     if (!isSupported) {
       state = const AudioCaptureState(

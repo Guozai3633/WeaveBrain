@@ -24,6 +24,7 @@ type Services struct {
 	Memory       *MemoryService
 	Completion   *CompletionService
 	Import       *ImportService
+	Echo         *EchoService
 	OutboxWorker *OutboxWorker
 	Store        *repository.DBStore
 }
@@ -67,6 +68,7 @@ func New(store *repository.DBStore, encryptionKey []byte) *Services {
 		Memory:       NewMemoryService(store.Memory, store.Capture, store.AudioAsset, store.Transcript),
 		Completion:   NewCompletionService(store.Capture, store.Memory, store.AISettings, store.Completion, completionGenerator),
 		Import:       NewImportService(store, store.Import, store.AISettings, completionGenerator),
+		Echo:         NewEchoService(store.EchoSettings, store.Echo),
 		OutboxWorker: outboxWorker,
 		Store:        store,
 	}

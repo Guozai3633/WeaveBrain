@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../shared/api/api_client.dart';
 import '../../../shared/api/api_host.dart';
 import '../../../shared/auth/auth_state.dart';
+import '../../../shared/native/capture_feedback_service.dart';
 import '../data/audio_file_storage_service.dart';
 import '../data/audio_recorder.dart';
 import '../data/audio_remote_gateway.dart';
@@ -142,6 +144,14 @@ final audioCaptureControllerProvider =
     NotifierProvider<AudioCaptureController, AudioCaptureState>(
       AudioCaptureController.new,
     );
+
+/// Confirmation feedback for the minimal record flow. Injected so tests and the
+/// web build can substitute a no-op/fake; real devices get haptics + sound.
+final captureFeedbackServiceProvider = Provider<CaptureFeedbackService>((ref) {
+  return kIsWeb
+      ? const NoopCaptureFeedbackService()
+      : const DeviceCaptureFeedbackService();
+});
 
 enum CaptureComposerStatus { idle, saving, saved, error }
 
